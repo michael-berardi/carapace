@@ -550,3 +550,50 @@ fn dropping_the_runtime_from_a_replay_callback_does_not_deadlock() {
         .recv_timeout(Duration::from_secs(5))
         .expect("dropping from a replay callback deadlocked");
 }
+
+#[test]
+fn an_enum_used_in_both_directions_with_a_skipped_variant_field_is_one_type() {
+    // `skip_serializing` hides a field from the output shape only; that is the same Rust type.
+    #[derive(serde::Serialize, serde::Deserialize, JsonSchema, Clone)]
+    #[serde(tag = "type", rename_all = "camelCase")]
+    enum Both {
+        A {
+            x: i32,
+            #[serde(skip_serializing)]
+            note: Option<String>,
+        },
+    }
+    #[derive(Default, serde::Serialize, serde::Deserialize, JsonSchema)]
+    struct Cfg2 {
+        #[serde(skip)]
+        _unused: (),
+    }
+    #[derive(serde::Serialize, JsonSchema)]
+    struct St2 {
+        b: Both,
+    }
+    #[derive(Clone, serde::Serialize, serde::Deserialize, JsonSchema)]
+    #[serde(tag = "type", rename_all = "camelCase")]
+    enum Act2 {
+        Go { b: Both },
+    }
+    struct Shared2;
+    impl App for Shared2 {
+        type State = St2;
+        type Action = Act2;
+        type Event = Event;
+        type Config = Cfg2;
+        const NAME: &'static str = "Shared2";
+        fn init(_: Cfg2, _: &mut Cx<Self>) -> Self {
+            Shared2
+        }
+        fn update(&mut self, _: Act2, _: &mut Cx<Self>) {}
+        fn state(&self) -> St2 {
+            St2 {
+                b: Both::A { x: 1, note: None },
+            }
+        }
+    }
+    let schema = carapace::schema::<Shared2>();
+    assert!(schema["definitions"]["Both"].is_object());
+}

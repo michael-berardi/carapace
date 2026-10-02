@@ -115,6 +115,13 @@ fn same_type(a: &Value, b: &Value) -> bool {
     if kind(a) != kind(b) {
         return false;
     }
+    if let (Some(va), Some(vb)) = (
+        a.get("oneOf").and_then(Value::as_array),
+        b.get("oneOf").and_then(Value::as_array),
+    ) {
+        // Enums: same variants in the same order, each variant's fields related as for structs.
+        return va.len() == vb.len() && va.iter().zip(vb).all(|(x, y)| same_type(x, y));
+    }
     match (
         a.get("properties").and_then(Value::as_object),
         b.get("properties").and_then(Value::as_object),

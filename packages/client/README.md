@@ -3,8 +3,10 @@
 TypeScript client for [Carapace](https://github.com/michael-berardi/carapace) cores: a typed,
 observable store over Tauri, the C ABI from Node and Electron, or any transport.
 
+Each release attaches the package as a tarball (the npm registry listing is pending):
+
 ```sh
-npm i @carapace/client
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.0/carapace-client-0.1.0.tgz
 ```
 
 ```ts

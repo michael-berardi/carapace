@@ -99,11 +99,10 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
       const settle = tracked.finally(() => pending.delete(settle));
       pending.add(settle);
       const id = Number(await subscribing);
-      if (stopped) {
-        koffi.unregister(cb as never);
-        return () => {};
-      }
+      // Never unregister here: the Rust subscription is live until `close` has stopped the core,
+      // and `close` releases every callback after that.
       callbacks.set(id, cb);
+      if (stopped) return () => {};
       return () => {
         if (stopped) return;
         // After unsubscribe returns, no callback is running or will start: safe to unregister.

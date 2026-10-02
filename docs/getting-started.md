@@ -155,7 +155,8 @@ Add `"carapace:default"` to `src-tauri/capabilities/default.json`.
 Web side:
 
 ```sh
-npm i @carapace/client
+# the package is attached to each GitHub release (registry listing pending)
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.0/carapace-client-0.1.0.tgz
 cargo carapace gen ts -p my-core --out src/generated
 ```
 

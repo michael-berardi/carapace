@@ -11,5 +11,5 @@ First public release.
 - `cargo carapace build apple`: universal macOS xcframework (iOS device and simulator slices with `--ios`), `doctor`.
 - `CarapaceKit` and `CarapaceFFI` Swift package: `ObservableObject` store with `send`, `sendSync`,
   bindings, queries, held events and faults.
-- `tauri-plugin-carapace` and `@carapace/client` (Tauri and Node transports, React hooks).
+- `tauri-plugin-carapace` and `@carapace/client` (Tauri and Node transports, React hooks); the client ships as a tarball on the GitHub release.
 - `examples/counter`: one core with SwiftUI, Tauri + React and Node shells; `tests/abi` in Python.
