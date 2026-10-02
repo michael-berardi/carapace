@@ -48,29 +48,43 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
   const handle = start(configText, err);
   if (!handle) throw new Error(takeString(err[0]) ?? "the core failed to start without an error message");
 
+  // koffi delivers core-thread callbacks on the JS thread. A synchronous call that waits for the
+  // core thread (unsubscribe, stop) would block the JS thread while a callback waits for it, so
+  // those two run on koffi's worker pool and the JS thread stays free to serve callbacks.
+  const inWorker = (fn: { async: (...args: unknown[]) => void }, ...args: unknown[]) =>
+    new Promise<void>((resolve, reject) => fn.async(...args, (err: unknown) => (err ? reject(err) : resolve())));
+
   const callbacks = new Map<number, unknown>();
+  const pending = new Set<Promise<void>>();
   let stopped = false;
+
+  const live = () => {
+    if (stopped) throw new Error("the core has been stopped");
+  };
 
   return {
     schemaHash: async () => "0x" + (schemaHash() as bigint).toString(16).padStart(16, "0"),
     snapshot: async () => {
+      live();
       const s = takeString(state(handle));
       if (s === null) throw new Error("the core returned no state");
       return s;
     },
     query: async (json) => {
+      live();
       const e: unknown[] = [null];
       const answer = takeString(query(json, Buffer.byteLength(json, "utf8"), e));
       if (answer === null) throw new Error(takeString(e[0]) ?? "the core failed a query without an error message");
       return answer;
     },
     dispatch: async (json) => {
-      if (stopped) throw new Error("the core has been stopped");
+      live();
       const bytes = Buffer.byteLength(json, "utf8");
       const message = takeString(dispatch(handle, json, bytes));
       if (message) throw new Error(message);
     },
     subscribe: async (onNotice: (n: Notice) => void) => {
+      live();
       const cb = koffi.register((_user: unknown, kind: number, data: unknown, len: number) => {
         const text = Buffer.from(koffi.decode(data, "uint8_t", len) as Uint8Array).toString("utf8");
         onNotice(kind === 0 ? { kind: "state", json: text } : kind === 1 ? { kind: "event", json: text } : { kind: "fault", text });
@@ -79,15 +93,22 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
       callbacks.set(id, cb);
       return () => {
         if (stopped) return;
-        unsubscribe(handle, id);
-        koffi.unregister(callbacks.get(id) as never);
-        callbacks.delete(id);
+        // After unsubscribe returns, no callback is running or will start: safe to unregister.
+        const done = inWorker(unsubscribe, handle, id)
+          .then(() => {
+            koffi.unregister(callbacks.get(id) as never);
+            callbacks.delete(id);
+          })
+          .catch((e) => console.error("carapace: unsubscribe failed:", e))
+          .finally(() => pending.delete(done));
+        pending.add(done);
       };
     },
-    close: () => {
+    close: async () => {
       if (stopped) return;
       stopped = true;
-      stop(handle);
+      await Promise.all(pending);
+      await inWorker(stop, handle);
     },
   };
 }

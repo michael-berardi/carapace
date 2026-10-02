@@ -28,13 +28,16 @@ pub fn build_cdylib(args: &Args) -> Result<String, String> {
     if !out.status.success() {
         return Err("cargo build failed (see the output above)".into());
     }
+    let manifest = selected_manifest(args)?;
     let wanted = ["dylib", "so", "dll"];
     let mut found = None;
     for line in String::from_utf8_lossy(&out.stdout).lines() {
         let Ok(v) = serde_json::from_str::<Value>(line) else {
             continue;
         };
-        if v["reason"] != "compiler-artifact" {
+        if v["reason"] != "compiler-artifact"
+            || v["manifest_path"].as_str() != Some(manifest.as_str())
+        {
             continue;
         }
         let is_cdylib = v["target"]["crate_types"]
@@ -56,6 +59,37 @@ pub fn build_cdylib(args: &Args) -> Result<String, String> {
          or pass --schema <file>"
             .into()
     })
+}
+
+/// Manifest path of the package `-p` names, or of the one in the current directory, so a
+/// dependency that also builds a cdylib is never mistaken for the core.
+fn selected_manifest(args: &Args) -> Result<String, String> {
+    let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
+        .args(["metadata", "--format-version", "1", "--no-deps"])
+        .output()
+        .map_err(|e| format!("cannot run cargo metadata: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "cargo metadata failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
+    }
+    let meta: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+    let cwd = std::env::current_dir().map_err(|e| e.to_string())?;
+    meta["packages"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|p| match &args.package {
+            Some(n) => p["name"] == n.as_str(),
+            None => p["manifest_path"]
+                .as_str()
+                .is_some_and(|m| std::path::Path::new(m).parent() == Some(cwd.as_path())),
+        })
+        .and_then(|p| p["manifest_path"].as_str().map(str::to_string))
+        .ok_or_else(|| {
+            "no package selected; pass -p <package> or run inside the core crate".to_string()
+        })
 }
 
 #[cfg(unix)]

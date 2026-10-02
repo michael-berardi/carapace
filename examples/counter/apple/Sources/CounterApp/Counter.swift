@@ -6,7 +6,7 @@ import CarapaceKit
 
 public enum Counter: CarapaceApp {
     public static let name = "Counter"
-    public static let schemaHash: UInt64 = 0xaa46f2524ab6eb7a
+    public static let schemaHash: UInt64 = 0xd26c8e19d702c8cd
 
 
     public enum Mode: String, Codable, Sendable, Hashable, CaseIterable {
@@ -31,7 +31,7 @@ public enum Counter: CarapaceApp {
         }
     }
 
-    public enum Action: Sendable, Hashable {
+    public indirect enum Action: Sendable, Hashable {
         case increment
         case decrement
         case setStep(step: Int)
@@ -43,6 +43,8 @@ public enum Counter: CarapaceApp {
         case fetch
         case fetched(value: Int)
         case reset
+        /// Ask the core for a `Summary` event.
+        case summarize
     }
 
     public struct Config: Codable, Sendable, Hashable {
@@ -53,23 +55,36 @@ public enum Counter: CarapaceApp {
             self.start = start
         }
 
-        enum CodingKeys: String, CodingKey {
+        enum CodingKeys: Swift.String, Swift.CodingKey {
             case start
         }
 
-        public init(from decoder: Decoder) throws {
+        public init(from decoder: Swift.Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             self.start = try c.decodeIfPresent(Int.self, forKey: .start) ?? 0
         }
     }
 
-    public enum Event: Sendable, Hashable {
+    /// A newtype variant: the struct's fields sit next to the tag in JSON.
+    public struct Summary: Codable, Sendable, Hashable {
+        public var count: Int
+        public var entries: Int
+
+        public init(count: Int, entries: Int) {
+            self.count = count
+            self.entries = entries
+        }
+    }
+
+    public indirect enum Event: Sendable, Hashable {
         /// The shell should show a notification.
         case notify(title: String, body: String)
+        /// A snapshot of where the counter stands, on request.
+        case summary(count: Int, entries: Int)
     }
 
     /// Pure helpers the shell can call without going through state.
-    public enum Query: Sendable, Hashable {
+    public indirect enum Query: Sendable, Hashable {
         /// Describe a number in words the UI can show.
         case describe(value: Int)
     }
@@ -85,7 +100,7 @@ public enum Counter: CarapaceApp {
 }
 
 extension Counter.Action: Codable {
-    private struct Key: CodingKey {
+    private struct Key: Swift.CodingKey {
         var stringValue: String
         var intValue: Int? { nil }
         init(_ s: String) { stringValue = s }
@@ -93,7 +108,7 @@ extension Counter.Action: Codable {
         init?(intValue: Int) { nil }
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let tag = try c.decode(String.self, forKey: Key("type"))
         switch tag {
@@ -113,12 +128,13 @@ extension Counter.Action: Codable {
             let v0 = try c.decode(Int.self, forKey: Key("value"))
             self = .fetched(value: v0)
         case "reset": self = .reset
+        case "summarize": self = .summarize
         default:
-            throw DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Action type \(tag)")
+            throw Swift.DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Action type \(tag)")
         }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Swift.Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .increment:
@@ -144,12 +160,14 @@ extension Counter.Action: Codable {
             try c.encode(v0, forKey: Key("value"))
         case .reset:
             try c.encode("reset", forKey: Key("type"))
+        case .summarize:
+            try c.encode("summarize", forKey: Key("type"))
         }
     }
 }
 
 extension Counter.Event: Codable {
-    private struct Key: CodingKey {
+    private struct Key: Swift.CodingKey {
         var stringValue: String
         var intValue: Int? { nil }
         init(_ s: String) { stringValue = s }
@@ -157,7 +175,7 @@ extension Counter.Event: Codable {
         init?(intValue: Int) { nil }
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let tag = try c.decode(String.self, forKey: Key("type"))
         switch tag {
@@ -165,24 +183,32 @@ extension Counter.Event: Codable {
             let v0 = try c.decode(String.self, forKey: Key("title"))
             let v1 = try c.decode(String.self, forKey: Key("body"))
             self = .notify(title: v0, body: v1)
+        case "summary":
+            let v0 = try c.decode(Int.self, forKey: Key("count"))
+            let v1 = try c.decode(Int.self, forKey: Key("entries"))
+            self = .summary(count: v0, entries: v1)
         default:
-            throw DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Event type \(tag)")
+            throw Swift.DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Event type \(tag)")
         }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Swift.Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .notify(let v0, let v1):
             try c.encode("notify", forKey: Key("type"))
             try c.encode(v0, forKey: Key("title"))
             try c.encode(v1, forKey: Key("body"))
+        case .summary(let v0, let v1):
+            try c.encode("summary", forKey: Key("type"))
+            try c.encode(v0, forKey: Key("count"))
+            try c.encode(v1, forKey: Key("entries"))
         }
     }
 }
 
 extension Counter.Query: Codable {
-    private struct Key: CodingKey {
+    private struct Key: Swift.CodingKey {
         var stringValue: String
         var intValue: Int? { nil }
         init(_ s: String) { stringValue = s }
@@ -190,7 +216,7 @@ extension Counter.Query: Codable {
         init?(intValue: Int) { nil }
     }
 
-    public init(from decoder: Decoder) throws {
+    public init(from decoder: Swift.Decoder) throws {
         let c = try decoder.container(keyedBy: Key.self)
         let tag = try c.decode(String.self, forKey: Key("type"))
         switch tag {
@@ -198,11 +224,11 @@ extension Counter.Query: Codable {
             let v0 = try c.decode(Int.self, forKey: Key("value"))
             self = .describe(value: v0)
         default:
-            throw DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Query type \(tag)")
+            throw Swift.DecodingError.dataCorruptedError(forKey: Key("type"), in: c, debugDescription: "unknown Query type \(tag)")
         }
     }
 
-    public func encode(to encoder: Encoder) throws {
+    public func encode(to encoder: Swift.Encoder) throws {
         var c = encoder.container(keyedBy: Key.self)
         switch self {
         case .describe(let v0):

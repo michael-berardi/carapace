@@ -53,6 +53,16 @@ pub enum Action {
         value: i64,
     },
     Reset,
+    /// Ask the core for a `Summary` event.
+    Summarize,
+}
+
+/// A newtype variant: the struct's fields sit next to the tag in JSON.
+#[derive(Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Summary {
+    pub count: i64,
+    pub entries: u32,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -60,6 +70,8 @@ pub enum Action {
 pub enum Event {
     /// The shell should show a notification.
     Notify { title: String, body: String },
+    /// A snapshot of where the counter stands, on request.
+    Summary(Summary),
 }
 
 pub struct Counter {
@@ -132,6 +144,10 @@ impl App for Counter {
                     body: format!("Count is now {value}"),
                 });
             }
+            Action::Summarize => cx.emit(Event::Summary(Summary {
+                count: self.count,
+                entries: self.history.len() as u32,
+            })),
             Action::Reset => {
                 self.count = 0;
                 self.history.clear();

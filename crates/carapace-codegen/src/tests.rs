@@ -168,3 +168,85 @@ fn union_codable_qualifies_named_types_outside_the_namespace() {
     );
     assert!(g.swift.contains("c.decode([Demo.Settings].self"));
 }
+
+fn newtype_action() -> String {
+    schema(
+        &format!(
+            r##"{STATE},"Settings":{{"type":"object","properties":{{"a":{{"type":"string"}},"my-key":{{"type":"integer","format":"int32"}}}},"required":["a","my-key"]}},
+            "Action":{{"oneOf":[{{"required":["type"],"type":"object","properties":{{"type":{{"type":"string","const":"save"}}}},
+            "allOf":[{{"$ref":"#/definitions/Settings"}}]}}]}}"##
+        ),
+        "Action",
+    )
+}
+
+#[test]
+fn newtype_variants_keep_the_wrapped_structs_fields() {
+    // Regression: `Save(Settings)` used to generate a bare `case save`, dropping the payload.
+    let g = generate(&newtype_action()).unwrap();
+    assert!(
+        g.swift.contains("case save(a: String, myKey: Int)"),
+        "{}",
+        g.swift
+    );
+    assert!(
+        g.typescript
+            .contains(r#"| { type: "save"; a: string; "my-key": number }"#),
+        "{}",
+        g.typescript
+    );
+    // Regression: non-identifier field names in action creators must use bracket access.
+    assert!(
+        g.typescript.contains(r#""my-key": a["my-key"]"#),
+        "{}",
+        g.typescript
+    );
+}
+
+#[test]
+fn enum_variants_with_unknown_schema_keywords_fail_loudly() {
+    let s = newtype_action().replace(
+        r##""allOf":[{"$ref":"#/definitions/Settings"}]"##,
+        r#""not":{"type":"null"}"#,
+    );
+    let e = generate(&s).err().unwrap().to_string();
+    assert!(e.contains("unsupported schema keyword"), "{e}");
+}
+
+#[test]
+fn rust_types_named_like_generated_swift_names_are_rejected_with_a_fix() {
+    let s = schema(
+        &format!(
+            r##"{STATE},"Decoder":{{"type":"object","properties":{{"a":{{"type":"string"}}}}}},
+            "Action":{{"oneOf":[{{"type":"object","properties":{{"type":{{"const":"go","type":"string"}},"d":{{"$ref":"#/definitions/Decoder"}}}},"required":["type","d"]}}]}}"##
+        ),
+        "Action",
+    );
+    let e = generate(&s).err().unwrap().to_string();
+    assert!(e.contains("Decoder") && e.contains("rename"), "{e}");
+    // A user type named Event while the app has NoEvent would collide with the generated alias.
+    let s = schema(
+        &format!(
+            r##"{STATE},"Event":{{"type":"object","properties":{{"a":{{"type":"string"}}}}}},
+            "Action":{{"oneOf":[{{"type":"object","properties":{{"type":{{"const":"go","type":"string"}},"e":{{"$ref":"#/definitions/Event"}}}},"required":["type","e"]}}]}}"##
+        ),
+        "Action",
+    );
+    let e = generate(&s).err().unwrap().to_string();
+    assert!(e.contains("Event") && e.contains("rename"), "{e}");
+}
+
+#[test]
+fn a_struct_that_holds_itself_without_indirection_is_rejected_and_enums_are_indirect() {
+    let s = schema(
+        &format!(
+            r##"{STATE},"Node":{{"type":"object","properties":{{"next":{{"anyOf":[{{"$ref":"#/definitions/Node"}},{{"type":"null"}}]}}}}}},
+            "Action":{{"oneOf":[{{"type":"object","properties":{{"type":{{"const":"go","type":"string"}},"n":{{"$ref":"#/definitions/Node"}}}},"required":["type","n"]}}]}}"##
+        ),
+        "Action",
+    );
+    let e = generate(&s).err().unwrap().to_string();
+    assert!(e.contains("Node") && e.contains("itself"), "{e}");
+    let ok = generate(&action_union()).unwrap();
+    assert!(ok.swift.contains("public indirect enum Action"));
+}

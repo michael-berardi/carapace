@@ -21,6 +21,7 @@ final class MockCore: CarapaceCore, @unchecked Sendable {
     private var next = 0
     private(set) var stopped = false
     var rejects: String?
+    var afterDispatch: (() -> Void)?
     init(n: Int) { self.n = n }
 
     func dispatch(_ action: Data) throws {
@@ -28,6 +29,7 @@ final class MockCore: CarapaceCore, @unchecked Sendable {
         let value = (try? JSONDecoder().decode([String: [String: Int]].self, from: action))?["add"]?["_0"] ?? 0
         lock.lock(); n += value; let snapshot = Data("{\"n\":\(n)}".utf8); let hs = Array(handlers.values); lock.unlock()
         hs.forEach { $0(.state(snapshot)) }
+        afterDispatch?()
     }
     func dispatchAndWait(_ action: Data) throws { try dispatch(action) }
     func snapshot() throws -> Data { lock.lock(); defer { lock.unlock() }; return Data("{\"n\":\(n)}".utf8) }
@@ -90,6 +92,23 @@ func settle() async {
         var got: [Demo.Event] = []
         store.onEvent = { got.append($0) }
         #expect(got == [.ping("a"), .ping("b")])
+    }
+
+    @Test func aHandlerThatCallsSendSyncDoesNotReorderEvents() async throws {
+        let core = MockCore(n: 0)
+        let store = try Store<Demo>(backend: MockBackend(core: core))
+        // Sending from inside the handler makes the core emit a third event.
+        core.afterDispatch = { core.emit(.event(Data("{\"ping\":{\"_0\":\"c\"}}".utf8))) }
+        core.emit(.event(Data("{\"ping\":{\"_0\":\"a\"}}".utf8)))
+        core.emit(.event(Data("{\"ping\":{\"_0\":\"b\"}}".utf8)))
+        await settle()
+        var got: [Demo.Event] = []
+        store.onEvent = { e in
+            got.append(e)
+            if e == .ping("a") { store.sendSync(.add(1)) }
+        }
+        await settle()
+        #expect(got == [.ping("a"), .ping("b"), .ping("c")])
     }
 
     @Test func undecodableEventsBecomeFaults() async throws {

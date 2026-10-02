@@ -113,7 +113,20 @@ pub fn generate(m: &Model) -> Result<String, Error> {
         );
         for v in variants {
             let params: Vec<String> = v.fields.iter().map(|f| field(f, false)).collect();
-            let names: Vec<String> = v.fields.iter().map(|f| key(&f.json)).collect();
+            // `a.field` when the name is an identifier, `a["field-name"]` otherwise.
+            let names: Vec<(String, String)> = v
+                .fields
+                .iter()
+                .map(|f| {
+                    let k = key(&f.json);
+                    let access = if k.starts_with('"') {
+                        format!("a[{k}]")
+                    } else {
+                        format!("a.{k}")
+                    };
+                    (k, access)
+                })
+                .collect();
             let name = key(&v.tag);
             if v.fields.is_empty() {
                 let _ = writeln!(
@@ -132,7 +145,7 @@ pub fn generate(m: &Model) -> Result<String, Error> {
                     v.tag,
                     names
                         .iter()
-                        .map(|n| format!("{n}: a.{n}"))
+                        .map(|(k, access)| format!("{k}: {access}"))
                         .collect::<Vec<_>>()
                         .join(", ")
                 );

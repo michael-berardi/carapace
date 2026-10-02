@@ -4,7 +4,8 @@
 //! Ownership rules, identical for every host language:
 //! - strings returned as `*mut c_char` are owned by the caller; free with `carapace_string_free`.
 //! - a handle from `carapace_start` is freed with `carapace_stop`.
-//! - the subscription callback runs on the core thread; copy what you need and return.
+//! - the subscription callback runs on the core thread, never two at once; copy what you need and return.
+//! - once `carapace_unsubscribe` returns, no callback for it is running or will start.
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -196,7 +197,8 @@ pub unsafe fn unsubscribe(handle: *mut CarapaceHandle, id: u64) {
 /// `handle` must come from `carapace_start` and is invalid afterwards.
 pub unsafe fn stop(handle: *mut CarapaceHandle) {
     if !handle.is_null() {
-        drop(Box::from_raw(handle));
+        // Never let a panic unwind into the host.
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(Box::from_raw(handle))));
     }
 }
 
@@ -209,11 +211,12 @@ pub unsafe fn string_free(s: *mut c_char) {
 }
 
 pub fn schema_json(schema: fn() -> serde_json::Value) -> *mut c_char {
-    to_c(serde_json::to_string(&schema()).unwrap_or_default())
+    catch_unwind(|| to_c(serde_json::to_string(&schema()).unwrap_or_default()))
+        .unwrap_or(ptr::null_mut())
 }
 
 pub fn hash(schema: fn() -> serde_json::Value) -> u64 {
-    schema_hash(&schema())
+    catch_unwind(|| schema_hash(&schema())).unwrap_or(0)
 }
 
 /// Run a pure query. Returns the answer JSON, or null with `*error` set.

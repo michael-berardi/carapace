@@ -46,6 +46,16 @@ import Testing
         await wait("fetched event") { titles.contains("Fetched") }
     }
 
+    @Test func newtypeEventVariantsCarryTheWrappedStructsFields() async throws {
+        let store = try CounterStore(backend: RustBackend(), config: .init(start: 7))
+        var summaries: [(Int, Int)] = []
+        store.onEvent = { if case let .summary(count, entries) = $0 { summaries.append((count, entries)) } }
+        store.send(.increment)
+        store.send(.summarize)
+        await wait("summary event") { !summaries.isEmpty }
+        #expect(summaries.first?.0 == 8 && summaries.first?.1 == 1)
+    }
+
     @Test func optionalFieldsRoundTrip() async throws {
         let store = try CounterStore(backend: RustBackend())
         store.send(.rename(label: "Groceries"))

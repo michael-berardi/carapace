@@ -69,6 +69,8 @@ struct ContentView: View {
                         try? await Task.sleep(for: .seconds(2.5))
                         withAnimation { banner = nil }
                     }
+                case .summary:
+                    break
                 }
             }
         }

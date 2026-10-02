@@ -54,6 +54,21 @@ describe("real Rust core from Node", () => {
     }
   });
 
+  it("delivers newtype event variants with the wrapped struct's fields beside the tag", async () => {
+    const { schemaHash, actions } = await import("../../../examples/counter/web/Counter.js");
+    const store = await Store.connect<CounterTypes>(await nodeTransport(lib, { config: { start: 7 } }), { schemaHash });
+    try {
+      const seen: unknown[] = [];
+      store.onEvent((e) => e.type === "summary" && seen.push(e));
+      await store.dispatch(actions.increment());
+      await store.dispatch(actions.summarize());
+      await until(() => seen.length > 0, "summary event");
+      expect(seen[0]).toEqual({ type: "summary", count: 8, entries: 1 });
+    } finally {
+      await store.close();
+    }
+  });
+
   it("runs pure queries without touching state", async () => {
     const { schemaHash } = await import("../../../examples/counter/web/Counter.js");
     const store = await Store.connect<CounterTypes>(await nodeTransport(lib), { schemaHash });

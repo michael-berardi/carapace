@@ -52,13 +52,32 @@ private final class Subscription: @unchecked Sendable {
 
 private final class RustCore: CarapaceCore, @unchecked Sendable {
     private var handle: OpaquePointer?
-    private let lock = NSLock()
+    /// Guards `handle`, `subs` and `inflight`. `stop` waits for calls already inside the core, so
+    /// the handle is never freed under another thread's call.
+    private let cond = NSCondition()
+    private var inflight = 0
     private var subs: [Int: Unmanaged<Subscription>] = [:]
 
     init(handle: OpaquePointer) { self.handle = handle }
 
+    /// The live handle, counted as in use until `leave()`. Nil once stopped.
+    private func enter() -> OpaquePointer? {
+        cond.lock(); defer { cond.unlock() }
+        guard let h = handle else { return nil }
+        inflight += 1
+        return h
+    }
+
+    private func leave() {
+        cond.lock()
+        inflight -= 1
+        if inflight == 0 { cond.broadcast() }
+        cond.unlock()
+    }
+
     func dispatch(_ action: Data) throws {
-        guard let h = live() else { throw CarapaceError.core("the core has been stopped") }
+        guard let h = enter() else { throw CarapaceError.core("the core has been stopped") }
+        defer { leave() }
         let message = action.withUnsafeBytes { raw in
             carapace_dispatch(h, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
         }
@@ -66,7 +85,8 @@ private final class RustCore: CarapaceCore, @unchecked Sendable {
     }
 
     func dispatchAndWait(_ action: Data) throws {
-        guard let h = live() else { throw CarapaceError.core("the core has been stopped") }
+        guard let h = enter() else { throw CarapaceError.core("the core has been stopped") }
+        defer { leave() }
         let message = action.withUnsafeBytes { raw in
             carapace_dispatch_wait(h, raw.bindMemory(to: UInt8.self).baseAddress, raw.count)
         }
@@ -74,13 +94,15 @@ private final class RustCore: CarapaceCore, @unchecked Sendable {
     }
 
     func snapshot() throws -> Data {
-        guard let h = live() else { throw CarapaceError.core("the core has been stopped") }
+        guard let h = enter() else { throw CarapaceError.core("the core has been stopped") }
+        defer { leave() }
         guard let text = takeString(carapace_state(h)) else { throw CarapaceError.core("the core returned no state") }
         return Data(text.utf8)
     }
 
     func subscribe(_ handler: @escaping @Sendable (CarapaceNotice) -> Void) -> Int {
-        guard let h = live() else { return 0 }
+        guard let h = enter() else { return 0 }
+        defer { leave() }
         let sub = Unmanaged.passRetained(Subscription(handler))
         let id = Int(carapace_subscribe(h, { user, kind, data, len in
             guard let user else { return }
@@ -93,35 +115,34 @@ private final class RustCore: CarapaceCore, @unchecked Sendable {
             default: sub.handler(.fault(String(decoding: bytes, as: UTF8.self)))
             }
         }, sub.toOpaque()))
-        lock.lock(); subs[id] = sub; lock.unlock()
+        cond.lock(); subs[id] = sub; cond.unlock()
         return id
     }
 
     func unsubscribe(_ id: Int) {
-        lock.lock()
-        let sub = subs[id]
-        lock.unlock()
-        // The memory stays until stop(): the core thread may be inside the callback right now.
+        guard let h = enter() else { return }
+        defer { leave() }
+        cond.lock()
+        let sub = subs.removeValue(forKey: id)
+        cond.unlock()
         sub?.takeUnretainedValue().cancel()
-        if let h = live() { carapace_unsubscribe(h, UInt64(id)) }
+        // Returns once no callback for `id` is running or will start; only then is the memory freed.
+        carapace_unsubscribe(h, UInt64(id))
+        sub?.release()
     }
 
     func stop() {
-        lock.lock()
+        cond.lock()
         let h = handle
         handle = nil
+        while inflight > 0 { cond.wait() }
         let owned = subs
         subs = [:]
-        lock.unlock()
+        cond.unlock()
         guard let h else { return }
         carapace_stop(h) // joins the core thread, so no callback runs after this returns
         owned.values.forEach { $0.release() }
     }
 
     deinit { stop() }
-
-    private func live() -> OpaquePointer? {
-        lock.lock(); defer { lock.unlock() }
-        return handle
-    }
 }

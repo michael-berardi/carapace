@@ -2,7 +2,7 @@
 // Regenerate with: cargo carapace gen ts
 
 export const appName = "Counter";
-export const schemaHash = "0xaa46f2524ab6eb7a";
+export const schemaHash = "0xd26c8e19d702c8cd";
 
 export type Mode = "idle" | "ticking" | "fetching";
 
@@ -26,6 +26,8 @@ export type Action =
   | { type: "fetch" }
   | { type: "fetched"; value: number }
   | { type: "reset" }
+  /** Ask the core for a `Summary` event. */
+  | { type: "summarize" }
 ;
 
 export interface Config {
@@ -33,9 +35,17 @@ export interface Config {
   start?: number;
 }
 
+/** A newtype variant: the struct's fields sit next to the tag in JSON. */
+export interface Summary {
+  count: number;
+  entries: number;
+}
+
 export type Event =
   /** The shell should show a notification. */
   | { type: "notify"; title: string; body: string }
+  /** A snapshot of where the counter stands, on request. */
+  | { type: "summary"; count: number; entries: number }
 ;
 
 /** Pure helpers the shell can call without going through state. */
@@ -60,6 +70,7 @@ export const actions = {
   fetch: (): Action => ({ type: "fetch" }),
   fetched: (a: { value: number }): Action => ({ type: "fetched", value: a.value }),
   reset: (): Action => ({ type: "reset" }),
+  summarize: (): Action => ({ type: "summarize" }),
 };
 
 /** The types a Carapace client is generic over. */

@@ -254,7 +254,50 @@ impl Parser<'_> {
             if tag_key.get_or_insert_with(|| key.clone()) != &key {
                 return err(format!("{name}: variants use different tag keys"));
             }
-            let fields = self.fields(&format!("{name}.{tag}"), v, Some(&key))?;
+            const KNOWN: [&str; 7] = [
+                "type",
+                "properties",
+                "required",
+                "description",
+                "allOf",
+                "title",
+                "additionalProperties",
+            ];
+            if let Some(extra) = v
+                .as_object()
+                .and_then(|o| o.keys().find(|k| !KNOWN.contains(&k.as_str())))
+            {
+                return err(format!(
+                    "{name}.{tag}: unsupported schema keyword {extra:?} in an enum variant"
+                ));
+            }
+            let mut fields = self.fields(&format!("{name}.{tag}"), v, Some(&key))?;
+            // A newtype variant `Save(Settings)` keeps the struct's fields next to the tag.
+            for part in v
+                .get("allOf")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let target = part
+                    .get("$ref")
+                    .and_then(Value::as_str)
+                    .and_then(|r| r.rsplit('/').next());
+                let Some(target) = target else {
+                    return err(format!(
+                        "{name}.{tag}: unsupported allOf in an enum variant"
+                    ));
+                };
+                self.named(target, &format!("{name}.{tag}"))?;
+                match self.out.get(target).map(|t| &t.def) {
+                    Some(Def::Struct { fields: inner }) => fields.extend(inner.iter().cloned()),
+                    _ => {
+                        return err(format!(
+                            "{name}.{tag}: the variant wraps {target}, which is not a plain struct. Tagged enums can only wrap structs; give the variant named fields instead"
+                        ))
+                    }
+                }
+            }
             let doc = v
                 .get("description")
                 .and_then(Value::as_str)

@@ -25,6 +25,12 @@ enum Action {
     Work,
     Done { value: i64 },
     Shout,
+    MutateThenPanic,
+    Forever,
+    Fast,
+    ArmPair,
+    CancelB,
+    B,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -60,6 +66,18 @@ impl App for T {
             }),
             Action::Done { value } => self.0 = value,
             Action::Shout => cx.emit(Event::Shout { text: "hi".into() }),
+            Action::MutateThenPanic => {
+                self.0 = 500;
+                panic!("half done");
+            }
+            Action::Forever => cx.after("forever", Duration::MAX, Action::Add { by: 1 }),
+            Action::Fast => cx.every("fast", Duration::ZERO, Action::Add { by: 1 }),
+            Action::ArmPair => {
+                cx.after("a", Duration::from_millis(20), Action::CancelB);
+                cx.after("b", Duration::from_millis(20), Action::B);
+            }
+            Action::CancelB => cx.cancel("b"),
+            Action::B => self.0 += 1000,
         }
     }
     fn state(&self) -> State {
@@ -210,4 +228,148 @@ fn schema_hash_is_stable_and_matches_the_codegen() {
     let a = carapace::schema_hash(&schema);
     assert_eq!(a, carapace::schema_hash(&carapace::schema::<T>()));
     assert_eq!(a, carapace_codegen::schema_hash(&schema));
+}
+
+#[test]
+fn unsubscribe_waits_for_a_callback_in_flight() {
+    let rt = Runtime::<T>::start(Config {});
+    let finished = Arc::new(Mutex::new(false));
+    let (entered_tx, entered_rx) = std::sync::mpsc::channel();
+    let f = finished.clone();
+    let id = rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            entered_tx.send(()).ok();
+            std::thread::sleep(Duration::from_millis(150));
+            *f.lock().unwrap() = true;
+        }
+    });
+    rt.dispatch(Action::Add { by: 1 }).unwrap();
+    entered_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    rt.unsubscribe(id);
+    assert!(
+        *finished.lock().unwrap(),
+        "unsubscribe returned while the callback was still running"
+    );
+}
+
+#[test]
+fn dropping_the_runtime_from_a_callback_does_not_deadlock_or_panic() {
+    let slot: Arc<Mutex<Option<Runtime<T>>>> = Arc::new(Mutex::new(None));
+    let rt = Runtime::<T>::start(Config {});
+    let s = slot.clone();
+    rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            // Drops the last owner on the core thread itself.
+            s.lock().unwrap().take();
+        }
+    });
+    let h = rt.handle();
+    *slot.lock().unwrap() = Some(rt);
+    h.dispatch(Action::Add { by: 1 }).unwrap();
+    wait_until("the core to stop", || {
+        h.dispatch(Action::Add { by: 1 }).is_err()
+    });
+}
+
+#[test]
+fn dispatch_wait_from_a_callback_is_an_error_not_a_hang() {
+    let rt = Runtime::<T>::start(Config {});
+    let h = rt.handle();
+    let result = Arc::new(Mutex::new(None));
+    let r = result.clone();
+    rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            *r.lock().unwrap() = Some(
+                h.dispatch_wait(Action::Add { by: 1 })
+                    .unwrap_err()
+                    .to_string(),
+            );
+        }
+    });
+    rt.dispatch_wait(Action::Add { by: 1 }).unwrap();
+    assert!(result
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .contains("would wait on itself"));
+}
+
+#[test]
+fn an_absurd_timer_delay_does_not_kill_the_core() {
+    let rt = Runtime::<T>::start(Config {});
+    rt.dispatch_wait(Action::Forever).unwrap();
+    rt.dispatch_wait(Action::Add { by: 2 }).unwrap();
+    assert_eq!(n(&rt), 2);
+}
+
+#[test]
+fn a_zero_interval_repeat_is_clamped_instead_of_spinning() {
+    let rt = Runtime::<T>::start(Config {});
+    rt.dispatch(Action::Fast).unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+    rt.dispatch_wait(Action::Stop).unwrap();
+    rt.dispatch_wait(Action::Add { by: 0 }).unwrap();
+    assert!(n(&rt) <= 110, "{} ticks in 100 ms", n(&rt));
+}
+
+#[test]
+fn a_timer_cancelled_by_an_earlier_due_timer_does_not_fire() {
+    let rt = Runtime::<T>::start(Config {});
+    rt.dispatch(Action::ArmPair).unwrap();
+    std::thread::sleep(Duration::from_millis(120));
+    rt.dispatch_wait(Action::Add { by: 0 }).unwrap();
+    assert_eq!(n(&rt), 0, "B fired although A cancelled it first");
+}
+
+#[test]
+fn a_panic_mid_update_publishes_the_real_state_and_fails_dispatch_wait() {
+    let rt = Runtime::<T>::start(Config {});
+    let states = Arc::new(Mutex::new(vec![]));
+    let s = states.clone();
+    rt.subscribe(move |n| {
+        if let Notice::State(t) = n {
+            s.lock().unwrap().push(t.to_string());
+        }
+    });
+    let err = rt
+        .dispatch_wait(Action::MutateThenPanic)
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("half done"), "{err}");
+    assert_eq!(n(&rt), 500);
+    assert_eq!(states.lock().unwrap().last().unwrap(), r#"{"n":500}"#);
+}
+
+#[test]
+fn state_fields_skipped_when_serialising_are_optional_in_the_schema() {
+    // Regression: the schema used to be built from serde's deserialize side, which marks a
+    // `skip_serializing_if` field required, so a shell would fail to decode a state without it.
+    #[derive(serde::Serialize, JsonSchema)]
+    struct S {
+        #[serde(skip_serializing_if = "Vec::is_empty")]
+        errors: Vec<String>,
+        n: i32,
+    }
+    struct Skippy;
+    impl App for Skippy {
+        type State = S;
+        type Action = Action;
+        type Event = Event;
+        type Config = Config;
+        const NAME: &'static str = "Skippy";
+        fn init(_: Config, _: &mut Cx<Self>) -> Self {
+            Skippy
+        }
+        fn update(&mut self, _: Action, _: &mut Cx<Self>) {}
+        fn state(&self) -> S {
+            S {
+                errors: vec![],
+                n: 1,
+            }
+        }
+    }
+    let schema = carapace::schema::<Skippy>();
+    let required = &schema["definitions"]["S"]["required"];
+    assert_eq!(required, &serde_json::json!(["n"]), "{schema}");
 }

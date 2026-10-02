@@ -23,12 +23,14 @@ only has to execute the `Effect`s the engine returns.
   before the next snapshot.
 - **One snapshot per dispatch.** A snapshot is published only if the JSON changed.
 - **Delivery order.** For one dispatch, the state notice comes before its events.
-- **Events are never lost.** Events emitted while nobody is subscribed (including from `init`)
-  are kept, up to 256, and replayed to the next subscriber. The Swift store and the TypeScript
-  store also hold events until a handler is set.
+- **Events are held, not dropped.** Events emitted while nobody is subscribed (including from `init`)
+  are kept, up to 256, and replayed to the next subscriber. The Swift and TypeScript stores also hold
+  events until a handler is set. One exception: the Tauri plugin forwards to the current webview, so
+  events emitted while a page reloads, before it attaches again, are missed. State is always re-read.
 - **Failures are loud.** An action that does not decode, a panic in `update`, a state or event that
   does not serialise, and a `cx.send` cycle (over 10,000 hops) all become faults naming the app and
-  the cause. The core keeps running after a panic.
+  the cause. The core keeps running after a panic, publishes the state the app actually holds, and
+  fails a pending `dispatch_wait` with the panic message.
 - **Stale bindings are caught.** Generated files embed a fingerprint of the schema. The shell
   compares it with the core's at start-up.
 
@@ -51,8 +53,15 @@ them with `carapace_string_free`.
 
 Rules for callers:
 
-- The subscription callback runs on the core thread. Copy the bytes and return; hop to your UI thread.
-- Never call `carapace_dispatch_wait` or `carapace_stop` from inside a callback. Both wait on the core thread.
+- The subscription callback runs on the core thread, never two at a time. Copy the bytes and return;
+  hop to your UI thread. Do not block it on a thread that may be calling `carapace_unsubscribe` or
+  `carapace_stop`.
+- When `carapace_unsubscribe` returns, no callback for that subscription is running or will start,
+  so the callback and its `user` data may be freed. (Called from inside a callback it returns at once.)
+- `carapace_dispatch_wait` from inside a callback returns an error instead of hanging. A blocking
+  host (Node's JS thread, a main thread) must not call `carapace_unsubscribe` or `carapace_stop` on a
+  thread that a pending callback needs: the Node transport runs both on koffi's worker pool.
+- Events replayed to a first subscriber arrive on the thread that subscribed, before any newer notification.
 - One core per binary: the symbols are fixed names.
 
 ## Schema and generation
@@ -92,4 +101,6 @@ The shell then decodes the same bytes. Shape `State` like the view, and window l
 
 The runtime owns one thread named `carapace-<App>`. `cx.spawn` work runs on short-lived
 threads named `carapace-<App>-work`. Timers run on the core thread itself (it sleeps until the
-next deadline), so a timer action and a shell action never run concurrently.
+next deadline), so a timer action and a shell action never run concurrently. Overdue timers run one
+at a time, earliest first, before the next queued action, so a handler that cancels another due
+timer wins; a repeating timer never fires faster than every millisecond and does not drift.

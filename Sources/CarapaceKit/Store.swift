@@ -66,6 +66,7 @@ public final class Store<App: CarapaceApp>: ObservableObject {
     private let owner: CoreOwner
     private let mailbox: Mailbox
     private var heldEvents: [App.Event] = []
+    private var flushing = false
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
@@ -93,8 +94,10 @@ public final class Store<App: CarapaceApp>: ObservableObject {
         self.mailbox = mailbox
         self.state = try decoder.decode(App.State.self, from: try core.snapshot())
         box.value = self
-        // Events replayed to the subscription above are already queued: drain them now.
-        drain()
+        // Events replayed to the subscription above are already queued: deliver them now. Queued
+        // state notices may be older than the snapshot just read, so ignore them and read once more.
+        drain(applyState: false)
+        refreshFromSnapshot()
     }
 
     /// Send an action to the core. Never blocks; the new state arrives via `state`.
@@ -136,9 +139,18 @@ public final class Store<App: CarapaceApp>: ObservableObject {
         Binding(get: { self.state[keyPath: keyPath] }, set: { self.send(make($0)) })
     }
 
-    private func drain() {
+    private func refreshFromSnapshot() {
+        do {
+            let next = try decoder.decode(App.State.self, from: try owner.core.snapshot())
+            state = next
+        } catch {
+            report("could not read the core's state: \(error)")
+        }
+    }
+
+    private func drain(applyState: Bool = true) {
         let batch = mailbox.take()
-        if let data = batch.state {
+        if applyState, let data = batch.state {
             do { state = try decoder.decode(App.State.self, from: data) }
             catch { report("core sent a state this app cannot decode: \(error)") }
         }
@@ -150,11 +162,15 @@ public final class Store<App: CarapaceApp>: ObservableObject {
         flushEvents()
     }
 
+    /// Delivers held events in order. A handler that calls `sendSync` re-enters `drain`; the
+    /// outer loop picks up what that adds, so events are never delivered out of order.
     private func flushEvents() {
-        guard let handler = onEvent, !heldEvents.isEmpty else { return }
-        let pending = heldEvents
-        heldEvents = []
-        for event in pending { handler(event) }
+        guard let handler = onEvent, !flushing else { return }
+        flushing = true
+        defer { flushing = false }
+        while !heldEvents.isEmpty {
+            handler(heldEvents.removeFirst())
+        }
     }
 
     private func report(_ message: String) {

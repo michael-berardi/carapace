@@ -5,9 +5,9 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex, RwLock};
-use std::thread::{self, JoinHandle};
-use std::time::Instant;
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::thread::{self, JoinHandle, ThreadId};
+use std::time::{Duration, Instant};
 
 use crate::engine::{App, Effect, Engine, Outcome, Queries, Repeat};
 
@@ -33,6 +33,14 @@ pub enum Error {
     },
     /// The runtime has been shut down.
     Stopped(&'static str),
+    /// A blocking call was made from the core thread (inside a subscriber callback), where it
+    /// could never finish.
+    Reentrant {
+        app: &'static str,
+        call: &'static str,
+    },
+    /// `update` panicked while handling an action waited on with `dispatch_wait`.
+    Panicked { app: &'static str, message: String },
 }
 
 impl fmt::Display for Error {
@@ -49,6 +57,11 @@ impl fmt::Display for Error {
                 )
             }
             Error::Stopped(app) => write!(f, "{app}: the core has been shut down"),
+            Error::Reentrant { app, call } => write!(
+                f,
+                "{app}: {call} was called from the core thread (a subscriber callback) and would wait on itself; hand the work to another thread"
+            ),
+            Error::Panicked { app, message } => write!(f, "{app}: update panicked: {message}"),
         }
     }
 }
@@ -58,7 +71,7 @@ impl std::error::Error for Error {}
 type Subscriber = Arc<dyn Fn(Notice<'_>) + Send + Sync>;
 
 enum Msg<A: App> {
-    Action(A::Action, Option<SyncSender<()>>),
+    Action(A::Action, Option<SyncSender<Result<(), String>>>),
     Stop,
 }
 
@@ -66,6 +79,17 @@ struct Shared<A: App> {
     tx: Mutex<Sender<Msg<A>>>,
     snapshot: RwLock<Arc<str>>,
     subs: Mutex<Subs>,
+    /// Held while subscribers are being called. `unsubscribe` takes it, so once it returns no
+    /// callback for that subscriber is running or will start.
+    delivery: Mutex<()>,
+    /// The core thread, to detect calls that would wait on themselves.
+    core_thread: OnceLock<ThreadId>,
+}
+
+impl<A: App> Shared<A> {
+    fn on_core_thread(&self) -> bool {
+        self.core_thread.get() == Some(&thread::current().id())
+    }
 }
 
 #[derive(Default)]
@@ -99,9 +123,16 @@ impl<A: App> Handle<A> {
             .map_err(|_| Error::Stopped(A::NAME))
     }
 
-    /// Queue an action and wait until it is processed and subscribers were told.
-    /// Never call this from a subscriber callback (it runs on the core thread).
+    /// Queue an action and wait until it is processed and subscribers were told. Fails with
+    /// [`Error::Panicked`] if `update` panicked on it, and with [`Error::Reentrant`] when called
+    /// from a subscriber callback (which runs on the core thread).
     pub fn dispatch_wait(&self, action: A::Action) -> Result<Arc<str>, Error> {
+        if self.shared.on_core_thread() {
+            return Err(Error::Reentrant {
+                app: A::NAME,
+                call: "dispatch_wait",
+            });
+        }
         let (ack_tx, ack_rx) = mpsc::sync_channel(1);
         self.shared
             .tx
@@ -109,8 +140,13 @@ impl<A: App> Handle<A> {
             .unwrap_or_else(|p| p.into_inner())
             .send(Msg::Action(action, Some(ack_tx)))
             .map_err(|_| Error::Stopped(A::NAME))?;
-        ack_rx.recv().map_err(|_| Error::Stopped(A::NAME))?;
-        Ok(self.snapshot())
+        match ack_rx.recv().map_err(|_| Error::Stopped(A::NAME))? {
+            Ok(()) => Ok(self.snapshot()),
+            Err(message) => Err(Error::Panicked {
+                app: A::NAME,
+                message,
+            }),
+        }
     }
 
     /// Decode an action from JSON, queue it, and wait until it is processed and subscribers
@@ -133,10 +169,20 @@ impl<A: App> Handle<A> {
             .clone()
     }
 
-    /// Subscribe to state, events and faults. The callback runs on the core
-    /// thread: keep it short and hand work to your UI thread.
+    /// Subscribe to state, events and faults. Callbacks run on the core thread, never two at
+    /// once; keep them short and hand work to your UI thread. Never block them on another
+    /// thread that may be calling `unsubscribe` or dropping the runtime. Events emitted before
+    /// the first subscription are replayed to it, in order, on the subscribing thread, before
+    /// any newer notification.
     pub fn subscribe(&self, f: impl Fn(Notice<'_>) + Send + Sync + 'static) -> u64 {
         let f: Subscriber = Arc::new(f);
+        // From inside a callback we already hold the delivery lock.
+        let _delivery = (!self.shared.on_core_thread()).then(|| {
+            self.shared
+                .delivery
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+        });
         let (id, replay) = {
             let mut subs = self.shared.subs.lock().unwrap_or_else(|p| p.into_inner());
             subs.next += 1;
@@ -150,6 +196,9 @@ impl<A: App> Handle<A> {
         id
     }
 
+    /// Stop notifications to `id`. When this returns (from any thread but the core thread), no
+    /// callback for it is running and none will start, so the callback and its `user` data
+    /// can be freed.
     pub fn unsubscribe(&self, id: u64) {
         self.shared
             .subs
@@ -157,6 +206,14 @@ impl<A: App> Handle<A> {
             .unwrap_or_else(|p| p.into_inner())
             .list
             .retain(|(i, _)| *i != id);
+        if !self.shared.on_core_thread() {
+            drop(
+                self.shared
+                    .delivery
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner()),
+            );
+        }
     }
 }
 
@@ -193,6 +250,8 @@ impl<A: App> Runtime<A> {
             tx: Mutex::new(tx),
             snapshot: RwLock::new(Arc::from(engine.snapshot())),
             subs: Mutex::new(Subs::default()),
+            delivery: Mutex::new(()),
+            core_thread: OnceLock::new(),
         });
         let handle = Handle { shared };
         let mut actor = Actor {
@@ -208,6 +267,7 @@ impl<A: App> Runtime<A> {
             .name(format!("carapace-{}", A::NAME))
             .spawn(move || actor.run())
             .expect("carapace: cannot spawn the core thread");
+        let _ = handle.shared.core_thread.set(thread.thread().id());
         Self {
             handle,
             thread: Some(thread),
@@ -236,10 +296,19 @@ impl<A: App> Drop for Runtime<A> {
             .unwrap_or_else(|p| p.into_inner())
             .send(Msg::Stop);
         if let Some(t) = self.thread.take() {
-            let _ = t.join();
+            // Dropped from inside a callback: the core thread cannot join itself. It sees Stop next.
+            if !self.handle.shared.on_core_thread() {
+                let _ = t.join();
+            }
         }
     }
 }
+
+/// Timers never wait longer than this: far enough to mean "never", close enough that
+/// `Instant` arithmetic cannot overflow.
+const FOREVER: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 30);
+/// A repeating timer faster than this would spin the core.
+const MIN_INTERVAL: Duration = Duration::from_millis(1);
 
 struct Timer<A: App> {
     key: &'static str,
@@ -255,9 +324,20 @@ struct Actor<A: App> {
     timers: Vec<Timer<A>>,
 }
 
+fn panic_message(panic: Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "non-string panic".into())
+}
+
 impl<A: App> Actor<A> {
     fn run(mut self) {
+        let _ = self.handle.shared.core_thread.set(thread::current().id());
         loop {
+            // Overdue timers run before anything else, so a steady stream of actions cannot starve them.
+            self.fire_due_timers();
             let next_due = self.timers.iter().map(|t| t.due).min();
             let msg = match next_due {
                 None => self.rx.recv().map_err(|_| RecvTimeoutError::Disconnected),
@@ -268,63 +348,82 @@ impl<A: App> Actor<A> {
             match msg {
                 Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
                 Ok(Msg::Action(action, ack)) => {
-                    self.apply(action);
+                    let result = self.apply(action);
                     if let Some(ack) = ack {
-                        let _ = ack.send(());
+                        let _ = ack.send(result);
                     }
                 }
-                Err(RecvTimeoutError::Timeout) => self.fire_due_timers(),
+                Err(RecvTimeoutError::Timeout) => {}
             }
         }
     }
 
+    /// Run due timers one at a time, earliest first, so a handler that cancels or replaces
+    /// another due timer takes effect before that one fires.
     fn fire_due_timers(&mut self) {
-        let now = Instant::now();
-        let mut due = Vec::new();
-        self.timers.retain_mut(|t| {
-            if t.due > now {
-                return true;
-            }
-            due.push(t.action.clone());
-            match t.repeat {
-                Repeat::Once(_) => false,
+        loop {
+            let now = Instant::now();
+            let Some(i) = self
+                .timers
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| t.due <= now)
+                .min_by_key(|(_, t)| t.due)
+                .map(|(i, _)| i)
+            else {
+                return;
+            };
+            let action = self.timers[i].action.clone();
+            match self.timers[i].repeat {
+                Repeat::Once(_) => {
+                    self.timers.remove(i);
+                }
                 Repeat::Every(every) => {
-                    t.due = now + every;
-                    true
+                    // From the planned time, so the interval does not drift; never burst to catch up.
+                    let every = every.max(MIN_INTERVAL);
+                    let t = &mut self.timers[i];
+                    t.due = (t.due + every).max(now);
                 }
             }
-        });
-        for action in due {
-            self.apply(action);
+            let _ = self.apply(action);
         }
     }
 
-    fn apply(&mut self, action: A::Action) {
+    /// Run one action. `Err` carries the panic message when `update` panicked.
+    fn apply(&mut self, action: A::Action) -> Result<(), String> {
         match catch_unwind(AssertUnwindSafe(|| self.engine.dispatch(action))) {
-            Ok(outcome) => self.publish(outcome),
+            Ok(outcome) => {
+                self.publish(outcome);
+                Ok(())
+            }
             Err(panic) => {
-                let what = panic
-                    .downcast_ref::<&str>()
-                    .map(|s| s.to_string())
-                    .or_else(|| panic.downcast_ref::<String>().cloned())
-                    .unwrap_or_else(|| "non-string panic".into());
+                let what = panic_message(panic);
                 self.notify(Notice::Fault(&format!(
                     "{}: update panicked: {what}",
                     A::NAME
                 )));
+                // The app may have changed before it panicked: show subscribers what it holds now.
+                if let Ok(Some(state)) = catch_unwind(AssertUnwindSafe(|| self.engine.resync())) {
+                    self.publish_state(&state);
+                }
+                Err(what)
             }
         }
     }
 
+    fn publish_state(&mut self, state: &str) {
+        *self
+            .handle
+            .shared
+            .snapshot
+            .write()
+            .unwrap_or_else(|p| p.into_inner()) = Arc::from(state);
+        self.notify(Notice::State(state));
+    }
+
     fn publish(&mut self, outcome: Outcome<A>) {
         if let Some(state) = &outcome.state {
-            *self
-                .handle
-                .shared
-                .snapshot
-                .write()
-                .unwrap_or_else(|p| p.into_inner()) = Arc::from(state.as_str());
-            self.notify(Notice::State(state));
+            self.publish_state(state);
         }
         for event in &outcome.events {
             match serde_json::to_string(event) {
@@ -347,11 +446,16 @@ impl<A: App> Actor<A> {
                 } => {
                     self.timers.retain(|t| t.key != key);
                     let wait = match repeat {
-                        Repeat::Once(d) | Repeat::Every(d) => d,
+                        Repeat::Once(d) => d,
+                        Repeat::Every(d) => d.max(MIN_INTERVAL),
                     };
+                    // An absurd delay means "never", not a panic on overflow.
+                    let due = Instant::now()
+                        .checked_add(wait.min(FOREVER))
+                        .unwrap_or_else(|| Instant::now() + FOREVER);
                     self.timers.push(Timer {
                         key,
-                        due: Instant::now() + wait,
+                        due,
                         repeat,
                         action,
                     });
@@ -374,6 +478,12 @@ impl<A: App> Actor<A> {
     }
 
     fn deliver_event(&self, json: String) {
+        let _delivery = self
+            .handle
+            .shared
+            .delivery
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let subs: Vec<Subscriber> = {
             let mut subs = self
                 .handle
@@ -391,11 +501,18 @@ impl<A: App> Actor<A> {
             subs.list.iter().map(|(_, f)| f.clone()).collect()
         };
         for f in subs {
-            f(Notice::Event(&json));
+            // A misbehaving subscriber must not take the core down.
+            let _ = catch_unwind(AssertUnwindSafe(|| f(Notice::Event(&json))));
         }
     }
 
     fn notify(&self, notice: Notice<'_>) {
+        let _delivery = self
+            .handle
+            .shared
+            .delivery
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
         let subs: Vec<Subscriber> = self
             .handle
             .shared
@@ -407,7 +524,6 @@ impl<A: App> Actor<A> {
             .map(|(_, f)| f.clone())
             .collect();
         for f in subs {
-            // A misbehaving subscriber must not take the core down.
             let _ = catch_unwind(AssertUnwindSafe(|| f(notice)));
         }
     }

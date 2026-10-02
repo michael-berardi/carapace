@@ -167,7 +167,115 @@ fn doc(out: &mut String, indent: &str, d: &Option<String>) {
     }
 }
 
+/// Names the generated code relies on. A Rust type with one of these names would shadow it.
+const RESERVED_TYPES: &[&str] = &[
+    "Any",
+    "Type",
+    "Protocol",
+    "Self",
+    "Bool",
+    "Int",
+    "UInt64",
+    "Double",
+    "String",
+    "Optional",
+    "Array",
+    "Dictionary",
+    "Key",
+    "CodingKeys",
+    "Decoder",
+    "Encoder",
+    "CodingKey",
+    "Codable",
+    "Hashable",
+    "Sendable",
+    "Equatable",
+    "CaseIterable",
+    "JSONValue",
+    "NoEvent",
+    "NoQuery",
+    "NoAnswer",
+    "Foundation",
+    "CarapaceKit",
+    "Swift",
+];
+
+fn check_names(m: &Model) -> Result<(), Error> {
+    for t in &m.types {
+        if RESERVED_TYPES.contains(&t.name.as_str()) && !(t.name == "NoEvent" && m.event.is_none())
+        {
+            return Err(Error(format!(
+                "the Rust type {} has a name the generated Swift needs; rename it (for example {}Info)",
+                t.name, t.name
+            )));
+        }
+    }
+    // The aliases State, Action, Config, Event, Query, Answer must not collide with another type.
+    let roots: [(&str, Option<&Ty>); 6] = [
+        ("State", Some(&m.state)),
+        ("Action", Some(&m.action)),
+        ("Config", Some(&m.config)),
+        ("Event", m.event.as_ref()),
+        ("Query", m.query.as_ref().map(|q| &q.0)),
+        ("Answer", m.query.as_ref().map(|q| &q.1)),
+    ];
+    for (alias, root) in roots {
+        let is_root = matches!(root, Some(Ty::Named(n)) if n == alias);
+        if m.index.contains_key(alias) && !is_root {
+            return Err(Error(format!(
+                "a Rust type named {alias} exists but is not the app's {alias} type; the generated Swift reserves that name, so rename the type"
+            )));
+        }
+    }
+    // A Swift struct cannot hold itself without indirection.
+    for t in &m.types {
+        if let Def::Struct { .. } = &t.def {
+            let mut seen = vec![t.name.clone()];
+            if let Some(path) = struct_cycle(m, &t.name, &t.name, &mut seen) {
+                return Err(Error(format!(
+                    "the struct {} contains itself without indirection ({}); a Swift struct cannot. Hold it in a Vec or an enum variant instead",
+                    t.name,
+                    path.join(" -> ")
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Follows direct and Optional struct fields (not Vec, map or enum, which are indirect in Swift).
+fn struct_cycle(m: &Model, target: &str, at: &str, seen: &mut Vec<String>) -> Option<Vec<String>> {
+    let &i = m.index.get(at)?;
+    let Def::Struct { fields } = &m.types[i].def else {
+        return None;
+    };
+    for f in fields {
+        let inner = match &f.ty {
+            Ty::Named(n) => n,
+            Ty::Optional(o) => match &**o {
+                Ty::Named(n) => n,
+                _ => continue,
+            },
+            _ => continue,
+        };
+        if inner == target {
+            let mut path = seen.clone();
+            path.push(inner.clone());
+            return Some(path);
+        }
+        if !seen.contains(inner) {
+            seen.push(inner.clone());
+            if let Some(p) = struct_cycle(m, target, inner, seen) {
+                return Some(p);
+            }
+            seen.pop();
+        }
+    }
+    None
+}
+
 pub fn generate(m: &Model) -> Result<String, Error> {
+    check_names(m)?;
     let app = &m.app;
     let mut o = String::new();
     let mut ext = String::new();
@@ -271,7 +379,7 @@ fn emit_type(o: &mut String, ext: &mut String, app: &str, t: &TypeDef, out_only:
         Def::Struct { fields } => emit_struct(o, &t.name, fields, out_only),
         Def::Union { tag_key, variants } => {
             let name = &t.name;
-            let _ = writeln!(o, "    public enum {name}: Sendable, Hashable {{");
+            let _ = writeln!(o, "    public indirect enum {name}: Sendable, Hashable {{");
             for v in variants {
                 doc(o, "        ", &v.doc);
                 if v.fields.is_empty() {
@@ -304,12 +412,12 @@ fn emit_union_codable(
     out_only: bool,
 ) {
     let _ = writeln!(e, "extension {app}.{name}: Codable {{");
-    e.push_str("    private struct Key: CodingKey {\n");
+    e.push_str("    private struct Key: Swift.CodingKey {\n");
     e.push_str("        var stringValue: String\n        var intValue: Int? { nil }\n");
     e.push_str("        init(_ s: String) { stringValue = s }\n");
     e.push_str("        init?(stringValue: String) { self.stringValue = stringValue }\n");
     e.push_str("        init?(intValue: Int) { nil }\n    }\n\n");
-    e.push_str("    public init(from decoder: Decoder) throws {\n");
+    e.push_str("    public init(from decoder: Swift.Decoder) throws {\n");
     e.push_str("        let c = try decoder.container(keyedBy: Key.self)\n");
     let _ = writeln!(
         e,
@@ -339,9 +447,9 @@ fn emit_union_codable(
     }
     let _ = writeln!(
         e,
-        "        default:\n            throw DecodingError.dataCorruptedError(forKey: Key(\"{tag_key}\"), in: c, debugDescription: \"unknown {name} {tag_key} \\(tag)\")\n        }}\n    }}\n"
+        "        default:\n            throw Swift.DecodingError.dataCorruptedError(forKey: Key(\"{tag_key}\"), in: c, debugDescription: \"unknown {name} {tag_key} \\(tag)\")\n        }}\n    }}\n"
     );
-    e.push_str("    public func encode(to encoder: Encoder) throws {\n");
+    e.push_str("    public func encode(to encoder: Swift.Encoder) throws {\n");
     e.push_str("        var c = encoder.container(keyedBy: Key.self)\n        switch self {\n");
     for v in variants {
         let case = ident(&v.tag);
@@ -411,7 +519,7 @@ fn emit_struct(o: &mut String, name: &str, fields: &[Field], out_only: bool) {
             .iter()
             .any(|f| ident(&f.json).trim_matches('`') != f.json)
     {
-        o.push_str("\n        enum CodingKeys: String, CodingKey {\n");
+        o.push_str("\n        enum CodingKeys: Swift.String, Swift.CodingKey {\n");
         for f in fields {
             let n = ident(&f.json);
             if n.trim_matches('`') == f.json {
@@ -423,7 +531,7 @@ fn emit_struct(o: &mut String, name: &str, fields: &[Field], out_only: bool) {
         o.push_str("        }\n");
     }
     if needs_decoder {
-        o.push_str("\n        public init(from decoder: Decoder) throws {\n");
+        o.push_str("\n        public init(from decoder: Swift.Decoder) throws {\n");
         o.push_str("            let c = try decoder.container(keyedBy: CodingKeys.self)\n");
         for (f, k) in fields.iter().zip(&kinds) {
             let n = ident(&f.json);

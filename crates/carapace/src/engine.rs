@@ -172,6 +172,16 @@ impl<A: App> Engine<A> {
         self.settle(cx)
     }
 
+    /// Re-serialise the state after an `update` panicked part-way, so subscribers see what the
+    /// app actually holds now. Returns the new snapshot if it changed.
+    pub fn resync(&mut self) -> Option<String> {
+        let json = serde_json::to_string(&self.app.state()).ok()?;
+        (json != self.snapshot).then(|| {
+            self.snapshot = json.clone();
+            json
+        })
+    }
+
     /// The current snapshot as JSON.
     pub fn snapshot(&self) -> &str {
         &self.snapshot
