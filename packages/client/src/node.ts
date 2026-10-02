@@ -51,8 +51,8 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
   // koffi delivers core-thread callbacks on the JS thread. A synchronous call that waits for the
   // core thread (unsubscribe, stop) would block the JS thread while a callback waits for it, so
   // those two run on koffi's worker pool and the JS thread stays free to serve callbacks.
-  const inWorker = (fn: { async: (...args: unknown[]) => void }, ...args: unknown[]) =>
-    new Promise<void>((resolve, reject) => fn.async(...args, (err: unknown) => (err ? reject(err) : resolve())));
+  const inWorker = <T = void>(fn: { async: (...args: unknown[]) => void }, ...args: unknown[]) =>
+    new Promise<T>((resolve, reject) => fn.async(...args, (err: unknown, result: T) => (err ? reject(err) : resolve(result))));
 
   const callbacks = new Map<number, unknown>();
   const pending = new Set<Promise<void>>();
@@ -89,7 +89,8 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
         const text = Buffer.from(koffi.decode(data, "uint8_t", len) as Uint8Array).toString("utf8");
         onNotice(kind === 0 ? { kind: "state", json: text } : kind === 1 ? { kind: "event", json: text } : { kind: "fault", text });
       }, koffi.pointer(Callback));
-      const id = Number(subscribe(handle, cb, null));
+      // Subscribing waits on the delivery lock, so it too must not block the JS thread.
+      const id = Number(await inWorker<bigint>(subscribe, handle, cb, null));
       callbacks.set(id, cb);
       return () => {
         if (stopped) return;

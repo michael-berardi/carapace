@@ -40,7 +40,18 @@ fn bundle<A: App>(
     let event = output.subschema_for::<A::Event>();
     let queries = queries(&mut input, &mut output);
     let mut definitions = output.take_definitions(true);
-    definitions.extend(input.take_definitions(true));
+    for (name, shape) in input.take_definitions(true) {
+        if let Some(other) = definitions.get(&name) {
+            // The same Rust type differs only in `required` and `default` between directions;
+            // anything else means two different types share a name.
+            assert!(
+                strip_directional(other) == strip_directional(&shape),
+                "carapace: {}: two different types are both named {name:?}, one sent by the shell and one by the core. Rename one of them.",
+                A::NAME
+            );
+        }
+        definitions.insert(name, shape);
+    }
     let mut out = json!({
         "carapace": ABI_VERSION,
         "name": A::NAME,
@@ -75,4 +86,18 @@ pub fn fnv1a(bytes: &[u8]) -> u64 {
         hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
     }
     hash
+}
+
+/// The schema without the keywords that legitimately differ between serialising and deserialising.
+fn strip_directional(v: &Value) -> Value {
+    match v {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(k, _)| !matches!(k.as_str(), "required" | "default"))
+                .map(|(k, v)| (k.clone(), strip_directional(v)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(strip_directional).collect()),
+        other => other.clone(),
+    }
 }

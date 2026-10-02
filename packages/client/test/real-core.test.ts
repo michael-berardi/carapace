@@ -81,6 +81,18 @@ describe("real Rust core from Node", () => {
     }
   });
 
+  it("closes cleanly while a timer keeps notifying (no deadlock with koffi callbacks)", async () => {
+    const { schemaHash, actions } = await import("../../../examples/counter/web/Counter.js");
+    for (let i = 0; i < 15; i++) {
+      const store = await Store.connect<CounterTypes>(await nodeTransport(lib), { schemaHash });
+      store.onEvent(() => {});
+      await store.dispatch(actions.startTicking());
+      for (let k = 0; k < 10; k++) await store.dispatch(actions.increment());
+      await new Promise((r) => setTimeout(r, i % 3 === 0 ? 0 : 30));
+      await store.close();
+    }
+  }, 30_000);
+
   it("names the problem when the core cannot decode an action", async () => {
     const { schemaHash } = await import("../../../examples/counter/web/Counter.js");
     const transport = await nodeTransport(lib);

@@ -116,6 +116,9 @@ fn read_from_library(path: &str) -> Result<String, String> {
         let schema: extern "C" fn() -> *mut c_char = std::mem::transmute(sym("carapace_schema")?);
         let free: extern "C" fn(*mut c_char) = std::mem::transmute(sym("carapace_string_free")?);
         let raw = schema();
+        if raw.is_null() {
+            return Err(format!("{path}: carapace_schema returned null, so the core panicked while building its schema (the message is printed above)"));
+        }
         let text = CStr::from_ptr(raw).to_string_lossy().into_owned();
         free(raw);
         Ok(text)

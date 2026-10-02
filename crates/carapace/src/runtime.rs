@@ -4,8 +4,9 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender, SyncSender};
-use std::sync::{Arc, Mutex, OnceLock, RwLock};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, RwLock};
 use std::thread::{self, JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
 
@@ -75,13 +76,54 @@ enum Msg<A: App> {
     Stop,
 }
 
+/// Serialises subscriber callbacks and remembers which thread is inside one, so a callback
+/// that calls back into the runtime (subscribe, unsubscribe, dispatch_wait) is recognised
+/// instead of deadlocking on a lock its own thread already holds.
+#[derive(Default)]
+struct DeliveryLock {
+    lock: Mutex<()>,
+    holder: Mutex<Option<ThreadId>>,
+}
+
+struct DeliveryGuard<'a> {
+    owner: &'a DeliveryLock,
+    _guard: MutexGuard<'a, ()>,
+}
+
+impl DeliveryLock {
+    fn held_by_current_thread(&self) -> bool {
+        *self.holder.lock().unwrap_or_else(|p| p.into_inner()) == Some(thread::current().id())
+    }
+
+    /// Take the lock, or `None` when this thread already holds it (a re-entrant call).
+    fn lock_unless_held(&self) -> Option<DeliveryGuard<'_>> {
+        if self.held_by_current_thread() {
+            return None;
+        }
+        let guard = self.lock.lock().unwrap_or_else(|p| p.into_inner());
+        *self.holder.lock().unwrap_or_else(|p| p.into_inner()) = Some(thread::current().id());
+        Some(DeliveryGuard {
+            owner: self,
+            _guard: guard,
+        })
+    }
+}
+
+impl Drop for DeliveryGuard<'_> {
+    fn drop(&mut self) {
+        *self.owner.holder.lock().unwrap_or_else(|p| p.into_inner()) = None;
+    }
+}
+
 struct Shared<A: App> {
     tx: Mutex<Sender<Msg<A>>>,
     snapshot: RwLock<Arc<str>>,
     subs: Mutex<Subs>,
     /// Held while subscribers are being called. `unsubscribe` takes it, so once it returns no
     /// callback for that subscriber is running or will start.
-    delivery: Mutex<()>,
+    delivery: DeliveryLock,
+    /// Set when the runtime is dropped: no callback starts after this.
+    stopped: AtomicBool,
     /// The core thread, to detect calls that would wait on themselves.
     core_thread: OnceLock<ThreadId>,
 }
@@ -127,7 +169,7 @@ impl<A: App> Handle<A> {
     /// [`Error::Panicked`] if `update` panicked on it, and with [`Error::Reentrant`] when called
     /// from a subscriber callback (which runs on the core thread).
     pub fn dispatch_wait(&self, action: A::Action) -> Result<Arc<str>, Error> {
-        if self.shared.on_core_thread() {
+        if self.shared.on_core_thread() || self.shared.delivery.held_by_current_thread() {
             return Err(Error::Reentrant {
                 app: A::NAME,
                 call: "dispatch_wait",
@@ -173,16 +215,11 @@ impl<A: App> Handle<A> {
     /// once; keep them short and hand work to your UI thread. Never block them on another
     /// thread that may be calling `unsubscribe` or dropping the runtime. Events emitted before
     /// the first subscription are replayed to it, in order, on the subscribing thread, before
-    /// any newer notification.
+    /// any newer notification. A callback may itself call `subscribe`, `unsubscribe` or `dispatch`.
     pub fn subscribe(&self, f: impl Fn(Notice<'_>) + Send + Sync + 'static) -> u64 {
         let f: Subscriber = Arc::new(f);
-        // From inside a callback we already hold the delivery lock.
-        let _delivery = (!self.shared.on_core_thread()).then(|| {
-            self.shared
-                .delivery
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-        });
+        // Holds the delivery lock for the replay, unless this thread is already inside a callback.
+        let _delivery = self.shared.delivery.lock_unless_held();
         let (id, replay) = {
             let mut subs = self.shared.subs.lock().unwrap_or_else(|p| p.into_inner());
             subs.next += 1;
@@ -196,9 +233,9 @@ impl<A: App> Handle<A> {
         id
     }
 
-    /// Stop notifications to `id`. When this returns (from any thread but the core thread), no
-    /// callback for it is running and none will start, so the callback and its `user` data
-    /// can be freed.
+    /// Stop notifications to `id`. When this returns (from any thread that is not inside a
+    /// callback), no callback for it is running and none will start, so the callback and its
+    /// `user` data can be freed. From inside a callback it returns at once.
     pub fn unsubscribe(&self, id: u64) {
         self.shared
             .subs
@@ -206,14 +243,7 @@ impl<A: App> Handle<A> {
             .unwrap_or_else(|p| p.into_inner())
             .list
             .retain(|(i, _)| *i != id);
-        if !self.shared.on_core_thread() {
-            drop(
-                self.shared
-                    .delivery
-                    .lock()
-                    .unwrap_or_else(|p| p.into_inner()),
-            );
-        }
+        drop(self.shared.delivery.lock_unless_held());
     }
 }
 
@@ -250,7 +280,8 @@ impl<A: App> Runtime<A> {
             tx: Mutex::new(tx),
             snapshot: RwLock::new(Arc::from(engine.snapshot())),
             subs: Mutex::new(Subs::default()),
-            delivery: Mutex::new(()),
+            delivery: DeliveryLock::default(),
+            stopped: AtomicBool::new(false),
             core_thread: OnceLock::new(),
         });
         let handle = Handle { shared };
@@ -288,6 +319,8 @@ impl<A: App> std::ops::Deref for Runtime<A> {
 
 impl<A: App> Drop for Runtime<A> {
     fn drop(&mut self) {
+        // No callback starts after this, even if we were dropped from inside one.
+        self.handle.shared.stopped.store(true, Ordering::SeqCst);
         let _ = self
             .handle
             .shared
@@ -358,20 +391,26 @@ impl<A: App> Actor<A> {
         }
     }
 
-    /// Run due timers one at a time, earliest first, so a handler that cancels or replaces
-    /// another due timer takes effect before that one fires.
+    /// One pass over the timers that are due right now: each fires at most once, earliest first,
+    /// and only if an earlier handler in the pass did not cancel or replace it. The pass is bounded
+    /// by the number of timers, so a slow tick cannot starve queued actions, `Stop` or `dispatch_wait`.
     fn fire_due_timers(&mut self) {
-        loop {
-            let now = Instant::now();
+        let now = Instant::now();
+        let mut due: Vec<(Instant, &'static str)> = self
+            .timers
+            .iter()
+            .filter(|t| t.due <= now)
+            .map(|t| (t.due, t.key))
+            .collect();
+        due.sort();
+        for (planned, key) in due {
+            // Cancelled or replaced by an earlier handler in this pass?
             let Some(i) = self
                 .timers
                 .iter()
-                .enumerate()
-                .filter(|(_, t)| t.due <= now)
-                .min_by_key(|(_, t)| t.due)
-                .map(|(i, _)| i)
+                .position(|t| t.key == key && t.due == planned)
             else {
-                return;
+                continue;
             };
             let action = self.timers[i].action.clone();
             match self.timers[i].repeat {
@@ -379,10 +418,11 @@ impl<A: App> Actor<A> {
                     self.timers.remove(i);
                 }
                 Repeat::Every(every) => {
-                    // From the planned time, so the interval does not drift; never burst to catch up.
+                    // From the planned time, so the interval does not drift. If the tick ran
+                    // late, the next one is due now: it then waits behind queued actions.
                     let every = every.max(MIN_INTERVAL);
                     let t = &mut self.timers[i];
-                    t.due = (t.due + every).max(now);
+                    t.due = (t.due + every).max(Instant::now());
                 }
             }
             let _ = self.apply(action);
@@ -478,12 +518,7 @@ impl<A: App> Actor<A> {
     }
 
     fn deliver_event(&self, json: String) {
-        let _delivery = self
-            .handle
-            .shared
-            .delivery
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _delivery = self.handle.shared.delivery.lock_unless_held();
         let subs: Vec<Subscriber> = {
             let mut subs = self
                 .handle
@@ -501,18 +536,16 @@ impl<A: App> Actor<A> {
             subs.list.iter().map(|(_, f)| f.clone()).collect()
         };
         for f in subs {
+            if self.handle.shared.stopped.load(Ordering::SeqCst) {
+                return;
+            }
             // A misbehaving subscriber must not take the core down.
             let _ = catch_unwind(AssertUnwindSafe(|| f(Notice::Event(&json))));
         }
     }
 
     fn notify(&self, notice: Notice<'_>) {
-        let _delivery = self
-            .handle
-            .shared
-            .delivery
-            .lock()
-            .unwrap_or_else(|p| p.into_inner());
+        let _delivery = self.handle.shared.delivery.lock_unless_held();
         let subs: Vec<Subscriber> = self
             .handle
             .shared
@@ -524,6 +557,9 @@ impl<A: App> Actor<A> {
             .map(|(_, f)| f.clone())
             .collect();
         for f in subs {
+            if self.handle.shared.stopped.load(Ordering::SeqCst) {
+                return;
+            }
             let _ = catch_unwind(AssertUnwindSafe(|| f(notice)));
         }
     }

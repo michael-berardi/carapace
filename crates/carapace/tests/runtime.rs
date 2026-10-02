@@ -31,6 +31,8 @@ enum Action {
     ArmPair,
     CancelB,
     B,
+    SlowEvery,
+    SlowTick,
 }
 
 #[derive(Serialize, JsonSchema)]
@@ -78,6 +80,11 @@ impl App for T {
             }
             Action::CancelB => cx.cancel("b"),
             Action::B => self.0 += 1000,
+            Action::SlowEvery => cx.every("slow", Duration::from_millis(10), Action::SlowTick),
+            Action::SlowTick => {
+                std::thread::sleep(Duration::from_millis(40));
+                self.0 += 1;
+            }
         }
     }
     fn state(&self) -> State {
@@ -372,4 +379,126 @@ fn state_fields_skipped_when_serialising_are_optional_in_the_schema() {
     let schema = carapace::schema::<Skippy>();
     let required = &schema["definitions"]["S"]["required"];
     assert_eq!(required, &serde_json::json!(["n"]), "{schema}");
+}
+
+#[test]
+fn a_timer_slower_than_its_interval_cannot_starve_actions_or_stop() {
+    // Regression: the timer pass used to loop while anything was due, so a tick longer than its
+    // interval kept the core in the pass forever and no queued action or Stop ever ran.
+    let rt = Runtime::<T>::start(Config {});
+    rt.dispatch(Action::SlowEvery).unwrap();
+    std::thread::sleep(Duration::from_millis(60));
+    let started = Instant::now();
+    rt.dispatch_wait(Action::Add { by: 1000 }).unwrap();
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "waited {:?}",
+        started.elapsed()
+    );
+    let started = Instant::now();
+    drop(rt);
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "stop took {:?}",
+        started.elapsed()
+    );
+}
+
+#[test]
+fn replay_callbacks_may_call_back_into_the_runtime_without_deadlocking() {
+    let rt = Runtime::<T>::start(Config {});
+    let h = rt.handle();
+    let waited = Arc::new(Mutex::new(None));
+    let w = waited.clone();
+    let inner_subscribed = Arc::new(Mutex::new(false));
+    let i = inner_subscribed.clone();
+    // The core emitted Hello during init: it is replayed to this first subscriber.
+    rt.subscribe(move |n| {
+        if let Notice::Event(_) = n {
+            *w.lock().unwrap() = Some(
+                h.dispatch_wait(Action::Add { by: 1 })
+                    .unwrap_err()
+                    .to_string(),
+            );
+            h.subscribe(|_| {});
+            *i.lock().unwrap() = true;
+        }
+    });
+    assert!(waited
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .contains("would wait on itself"));
+    assert!(*inner_subscribed.lock().unwrap());
+}
+
+#[test]
+fn no_callback_starts_after_the_runtime_was_dropped_from_inside_one() {
+    let slot: Arc<Mutex<Option<Runtime<T>>>> = Arc::new(Mutex::new(None));
+    let rt = Runtime::<T>::start(Config {});
+    let after = Arc::new(Mutex::new(0usize));
+    let s = slot.clone();
+    rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            s.lock().unwrap().take();
+        }
+    });
+    let a = after.clone();
+    rt.subscribe(move |_| *a.lock().unwrap() += 1);
+    let h = rt.handle();
+    *slot.lock().unwrap() = Some(rt);
+    h.dispatch(Action::Add { by: 1 }).unwrap();
+    wait_until("the core to stop", || {
+        h.dispatch(Action::Add { by: 1 }).is_err()
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(
+        *after.lock().unwrap(),
+        0,
+        "the second subscriber was called after stop"
+    );
+}
+
+#[test]
+#[should_panic(expected = "two different types are both named")]
+fn two_different_types_with_the_same_name_in_both_directions_are_rejected() {
+    mod shell {
+        #[derive(serde::Serialize, serde::Deserialize, schemars::JsonSchema, Default)]
+        pub struct Dup {
+            pub x: i32,
+        }
+    }
+    mod core {
+        #[derive(serde::Serialize, schemars::JsonSchema)]
+        pub struct Dup {
+            pub y: String,
+        }
+    }
+    #[derive(Default, serde::Serialize, serde::Deserialize, JsonSchema)]
+    struct Cfg {
+        d: shell::Dup,
+    }
+    #[derive(serde::Serialize, JsonSchema)]
+    struct St {
+        d: core::Dup,
+    }
+    struct Clash;
+    impl App for Clash {
+        type State = St;
+        type Action = Action;
+        type Event = Event;
+        type Config = Cfg;
+        const NAME: &'static str = "Clash";
+        fn init(_: Cfg, _: &mut Cx<Self>) -> Self {
+            Clash
+        }
+        fn update(&mut self, _: Action, _: &mut Cx<Self>) {}
+        fn state(&self) -> St {
+            St {
+                d: core::Dup { y: String::new() },
+            }
+        }
+    }
+    let _ = carapace::schema::<Clash>();
 }
