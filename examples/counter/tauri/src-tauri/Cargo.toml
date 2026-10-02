@@ -1,0 +1,17 @@
+[package]
+name = "counter-tauri"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Standalone: the main workspace stays quick to build.
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = "2"
+carapace = { path = "../../../../crates/carapace" }
+tauri-plugin-carapace = { path = "../../../../crates/tauri-plugin-carapace" }
+counter-core = { path = "../.." }

@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-schema-hash"
+description = "Enables the schema_hash command without any pre-configured scope."
+commands.allow = ["schema_hash"]
+
+[[permission]]
+identifier = "deny-schema-hash"
+description = "Denies the schema_hash command without any pre-configured scope."
+commands.deny = ["schema_hash"]

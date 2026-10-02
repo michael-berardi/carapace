@@ -1,0 +1,21 @@
+[package]
+name = "carapace"
+description = "A Rust application core with a stable C ABI and generated native shells (SwiftUI, TypeScript, Tauri, and anything that can call C)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["ffi", "swiftui", "tauri", "app-architecture", "cross-platform"]
+categories = ["gui", "api-bindings"]
+readme = "../../README.md"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+schemars.workspace = true
+
+[dev-dependencies]
+carapace-codegen.workspace = true

@@ -1,0 +1,3 @@
+[default]
+description = "Lets the webview send actions to the Carapace core, read its state and run its pure queries."
+permissions = ["allow-dispatch", "allow-state", "allow-schema-hash", "allow-attach", "allow-query"]

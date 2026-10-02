@@ -1,0 +1,19 @@
+:root { color-scheme: light dark; --bg: #f5f5f7; --fg: #1d1d1f; --muted: #6e6e73; --card: #fff; --accent: #0a84ff; --warn: #ff9f0a; --line: #d2d2d7; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1c1c1e; --fg: #f5f5f7; --muted: #98989d; --card: #2c2c2e; --line: #3a3a3c; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+main { max-width: 380px; margin: 0 auto; padding: 28px 24px; display: grid; gap: 18px; justify-items: center; }
+h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--muted); }
+.count { font-size: 72px; font-weight: 600; font-variant-numeric: tabular-nums; line-height: 1; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; align-items: center; }
+button { font: inherit; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--fg); cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button:disabled { opacity: .5; cursor: default; }
+button.round { width: 44px; font-size: 20px; }
+button.danger { color: #ff453a; }
+.bars { height: 44px; width: 100%; display: flex; align-items: flex-end; justify-content: flex-end; gap: 4px; }
+.bars i { display: block; width: 14px; border-radius: 3px; background: var(--accent); }
+.bars i.neg { background: var(--warn); }
+.banner { padding: 6px 14px; border-radius: 999px; background: var(--card); border: 1px solid var(--line); }
+.fault { color: #ff453a; font-size: 12px; }

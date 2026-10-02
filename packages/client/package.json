@@ -1,0 +1,42 @@
+{
+  "name": "@carapace/client",
+  "version": "0.1.0",
+  "description": "TypeScript client for Carapace cores: a typed store over Tauri, Electron/Node (C ABI) or any transport.",
+  "license": "MIT",
+  "type": "module",
+  "repository": { "type": "git", "url": "git+https://github.com/michael-berardi/carapace.git", "directory": "packages/client" },
+  "homepage": "https://github.com/michael-berardi/carapace",
+  "bugs": "https://github.com/michael-berardi/carapace/issues",
+  "keywords": ["rust", "tauri", "electron", "ffi", "state", "react", "carapace"],
+  "files": ["dist", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
+    "./tauri": { "types": "./dist/tauri.d.ts", "default": "./dist/tauri.js" },
+    "./node": { "types": "./dist/node.d.ts", "default": "./dist/node.js" },
+    "./react": { "types": "./dist/react.d.ts", "default": "./dist/react.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "peerDependencies": {
+    "@tauri-apps/api": "^2",
+    "koffi": "^2",
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "@tauri-apps/api": { "optional": true },
+    "koffi": { "optional": true },
+    "react": { "optional": true }
+  },
+  "devDependencies": {
+    "@tauri-apps/api": "^2",
+    "@types/node": "^22",
+    "@types/react": "^18",
+    "koffi": "^2",
+    "react": "^18",
+    "typescript": "^5",
+    "vitest": "^2"
+  }
+}

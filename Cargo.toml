@@ -1,0 +1,26 @@
+[workspace]
+members = ["crates/carapace", "crates/carapace-codegen", "crates/carapace-cli", "crates/tauri-plugin-carapace", "examples/counter"]
+default-members = ["crates/carapace", "crates/carapace-codegen", "crates/carapace-cli", "crates/tauri-plugin-carapace", "examples/counter"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT"
+repository = "https://github.com/michael-berardi/carapace"
+homepage = "https://github.com/michael-berardi/carapace"
+authors = ["Implose Cybernetics"]
+
+[workspace.dependencies]
+carapace = { path = "crates/carapace", version = "0.1.0" }
+carapace-codegen = { path = "crates/carapace-codegen", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+schemars = "1"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "unwind"

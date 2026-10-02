@@ -1,0 +1,23 @@
+{
+  "name": "counter-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "gen": "cargo run -q -p cargo-carapace --manifest-path ../../../Cargo.toml -- gen ts -p counter-core --out src/generated",
+    "build:web": "esbuild src/main.tsx --bundle --alias:react=./node_modules/react --minify --format=esm --outfile=dist/app.js && cp src/index.html src/style.css src/fatal.js dist/",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@carapace/client": "file:../../../packages/client",
+    "@tauri-apps/api": "^2",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "esbuild": "^0.24",
+    "typescript": "^5"
+  }
+}

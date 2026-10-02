@@ -1,0 +1,11 @@
+/target
+**/target
+.build/
+.swiftpm/
+node_modules/
+dist/
+*.xcframework
+examples/counter/apple/Core/
+**/src-tauri/gen/
+.DS_Store
+*.tsbuildinfo
