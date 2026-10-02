@@ -145,8 +145,8 @@ Full walk-throughs: [Getting started](docs/getting-started.md).
 
 State travels as JSON snapshots, one per change, coalesced on the shell side.
 That keeps the ABI to twelve functions and makes every shell trivial. Measured on
-an M-series Mac, the core-side cost per action is 5 µs for a tiny state, 53 µs
-at 1,000 rows (49 KB) and 0.44 ms at 10,000 rows (514 KB). Keep `State` shaped
+an M-series Mac, the core-side cost per action is 5 to 9 µs for a tiny state, 50 µs
+at 1,000 rows (49 KB) and 0.42 ms at 10,000 rows (514 KB). Keep `State` shaped
 like the view, and window long lists.
 [Architecture](docs/architecture.md) has the details and the limits.
 
