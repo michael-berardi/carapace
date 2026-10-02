@@ -42,10 +42,10 @@ fn bundle<A: App>(
     let mut definitions = output.take_definitions(true);
     for (name, shape) in input.take_definitions(true) {
         if let Some(other) = definitions.get(&name) {
-            // The same Rust type differs only in `required` and `default` between directions;
-            // anything else means two different types share a name.
+            // The same Rust type can differ between directions (`required`, `default`, fields hidden
+            // with `skip_serializing`); two different types that share a name cannot be reconciled.
             assert!(
-                strip_directional(other) == strip_directional(&shape),
+                same_type(other, &shape),
                 "carapace: {}: two different types are both named {name:?}, one sent by the shell and one by the core. Rename one of them.",
                 A::NAME
             );
@@ -99,5 +99,29 @@ fn strip_directional(v: &Value) -> Value {
         ),
         Value::Array(items) => Value::Array(items.iter().map(strip_directional).collect()),
         other => other.clone(),
+    }
+}
+
+/// Whether two definitions plausibly describe one Rust type seen from the two serde directions:
+/// same kind, and for objects one field set contains the other.
+fn same_type(a: &Value, b: &Value) -> bool {
+    let kind = |v: &Value| {
+        (
+            v.get("oneOf").is_some(),
+            v.get("enum").is_some(),
+            v.get("properties").is_some(),
+        )
+    };
+    if kind(a) != kind(b) {
+        return false;
+    }
+    match (
+        a.get("properties").and_then(Value::as_object),
+        b.get("properties").and_then(Value::as_object),
+    ) {
+        (Some(pa), Some(pb)) => {
+            pa.keys().all(|k| pb.contains_key(k)) || pb.keys().all(|k| pa.contains_key(k))
+        }
+        _ => strip_directional(a) == strip_directional(b),
     }
 }

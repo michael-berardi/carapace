@@ -19,7 +19,7 @@ build output, which is git-ignored.
 - Windows support for `cargo carapace gen` (read the schema from a built `.dll`)
 - A Kotlin generator and a Dart generator, tested against a real Android or Flutter build
 - A WASM host for `Engine`, so a core can run in a browser tab with no native library
-- iOS verification of the `build apple --ios` slices
+- Compiling and testing `CarapaceKit` for iOS (the `--ios` xcframework slices already build)
 
 ## Ground rules
 

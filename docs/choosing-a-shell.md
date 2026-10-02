@@ -11,7 +11,7 @@ users and the team. How each option fits Carapace today:
 | **Flutter** | Consistent custom-drawn UI everywhere, good performance. | No native controls. | Call the C ABI through `dart:ffi`. No generator yet; the wire format is plain JSON. |
 | **React Native (macOS, Windows)** | Reuse React skills. | macOS and Windows support trails mobile. | The Node/C ABI approach applies through a native module. Not built. |
 | **Qt / C++** | Heavy custom needs, mature desktop toolkit. | Dated look, licensing. | `carapace.h` is a C header. Not built. |
-| **Catalyst, SwiftUI multi-platform** | Share code across Mac, iPad, iPhone. | Apple only. | The same `CarapaceKit` store. iOS slices build with `--ios`; not yet exercised. |
+| **Catalyst, SwiftUI multi-platform** | Share code across Mac, iPad, iPhone. | Apple only. | The same `CarapaceKit` store. the iOS xcframework slices build with `--ios`; `CarapaceKit` has not been compiled for iOS yet. |
 
 A common split, and the one Good Night uses: native SwiftUI on macOS, a Tauri shell on Windows,
 and one Rust engine under both. The macOS app stays a real Mac app; Windows gets a shell that

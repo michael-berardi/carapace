@@ -89,8 +89,20 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
         const text = Buffer.from(koffi.decode(data, "uint8_t", len) as Uint8Array).toString("utf8");
         onNotice(kind === 0 ? { kind: "state", json: text } : kind === 1 ? { kind: "event", json: text } : { kind: "fault", text });
       }, koffi.pointer(Callback));
-      // Subscribing waits on the delivery lock, so it too must not block the JS thread.
-      const id = Number(await inWorker<bigint>(subscribe, handle, cb, null));
+      // Subscribing waits on the delivery lock, so it too must not block the JS thread. It is tracked
+      // so `close` waits for it instead of freeing the handle under it.
+      const subscribing = inWorker<bigint>(subscribe, handle, cb, null);
+      const tracked = subscribing.then(
+        () => {},
+        () => {},
+      );
+      const settle = tracked.finally(() => pending.delete(settle));
+      pending.add(settle);
+      const id = Number(await subscribing);
+      if (stopped) {
+        koffi.unregister(cb as never);
+        return () => {};
+      }
       callbacks.set(id, cb);
       return () => {
         if (stopped) return;
@@ -110,6 +122,9 @@ export async function nodeTransport(libraryPath: string, options: { config?: unk
       stopped = true;
       await Promise.all(pending);
       await inWorker(stop, handle);
+      // The core thread is gone: no callback can run, so release what is left.
+      for (const cb of callbacks.values()) koffi.unregister(cb as never);
+      callbacks.clear();
     },
   };
 }

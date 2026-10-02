@@ -134,10 +134,18 @@ impl<A: App> Shared<A> {
     }
 }
 
+/// A subscriber and the flag `unsubscribe` clears, so a fan-out that already copied the list
+/// skips it.
+struct Sub {
+    id: u64,
+    callback: Subscriber,
+    active: Arc<AtomicBool>,
+}
+
 #[derive(Default)]
 struct Subs {
     next: u64,
-    list: Vec<(u64, Subscriber)>,
+    list: Vec<Sub>,
     backlog: VecDeque<String>,
 }
 
@@ -217,17 +225,27 @@ impl<A: App> Handle<A> {
     /// the first subscription are replayed to it, in order, on the subscribing thread, before
     /// any newer notification. A callback may itself call `subscribe`, `unsubscribe` or `dispatch`.
     pub fn subscribe(&self, f: impl Fn(Notice<'_>) + Send + Sync + 'static) -> u64 {
+        // Own the shared state: a callback may drop the `Runtime` this method was reached through.
+        let shared = self.shared.clone();
         let f: Subscriber = Arc::new(f);
         // Holds the delivery lock for the replay, unless this thread is already inside a callback.
-        let _delivery = self.shared.delivery.lock_unless_held();
+        let _delivery = shared.delivery.lock_unless_held();
+        let active = Arc::new(AtomicBool::new(true));
         let (id, replay) = {
-            let mut subs = self.shared.subs.lock().unwrap_or_else(|p| p.into_inner());
+            let mut subs = shared.subs.lock().unwrap_or_else(|p| p.into_inner());
             subs.next += 1;
             let id = subs.next;
-            subs.list.push((id, f.clone()));
+            subs.list.push(Sub {
+                id,
+                callback: f.clone(),
+                active: active.clone(),
+            });
             (id, std::mem::take(&mut subs.backlog))
         };
         for event in replay {
+            if shared.stopped.load(Ordering::SeqCst) || !active.load(Ordering::SeqCst) {
+                break;
+            }
             f(Notice::Event(&event));
         }
         id
@@ -235,15 +253,23 @@ impl<A: App> Handle<A> {
 
     /// Stop notifications to `id`. When this returns (from any thread that is not inside a
     /// callback), no callback for it is running and none will start, so the callback and its
-    /// `user` data can be freed. From inside a callback it returns at once.
+    /// `user` data can be freed. From inside a callback it returns at once, and the subscriber
+    /// is not called again after that callback returns.
     pub fn unsubscribe(&self, id: u64) {
-        self.shared
+        let shared = self.shared.clone();
+        shared
             .subs
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .list
-            .retain(|(i, _)| *i != id);
-        drop(self.shared.delivery.lock_unless_held());
+            .retain(|sub| {
+                let keep = sub.id != id;
+                if !keep {
+                    sub.active.store(false, Ordering::SeqCst);
+                }
+                keep
+            });
+        drop(shared.delivery.lock_unless_held());
     }
 }
 
@@ -330,7 +356,9 @@ impl<A: App> Drop for Runtime<A> {
             .send(Msg::Stop);
         if let Some(t) = self.thread.take() {
             // Dropped from inside a callback: the core thread cannot join itself. It sees Stop next.
-            if !self.handle.shared.on_core_thread() {
+            if !self.handle.shared.on_core_thread()
+                && !self.handle.shared.delivery.held_by_current_thread()
+            {
                 let _ = t.join();
             }
         }
@@ -519,7 +547,7 @@ impl<A: App> Actor<A> {
 
     fn deliver_event(&self, json: String) {
         let _delivery = self.handle.shared.delivery.lock_unless_held();
-        let subs: Vec<Subscriber> = {
+        let subs: Vec<(Subscriber, Arc<AtomicBool>)> = {
             let mut subs = self
                 .handle
                 .shared
@@ -533,11 +561,17 @@ impl<A: App> Actor<A> {
                 subs.backlog.push_back(json);
                 return;
             }
-            subs.list.iter().map(|(_, f)| f.clone()).collect()
+            subs.list
+                .iter()
+                .map(|s| (s.callback.clone(), s.active.clone()))
+                .collect()
         };
-        for f in subs {
+        for (f, active) in subs {
             if self.handle.shared.stopped.load(Ordering::SeqCst) {
                 return;
+            }
+            if !active.load(Ordering::SeqCst) {
+                continue;
             }
             // A misbehaving subscriber must not take the core down.
             let _ = catch_unwind(AssertUnwindSafe(|| f(Notice::Event(&json))));
@@ -546,7 +580,7 @@ impl<A: App> Actor<A> {
 
     fn notify(&self, notice: Notice<'_>) {
         let _delivery = self.handle.shared.delivery.lock_unless_held();
-        let subs: Vec<Subscriber> = self
+        let subs: Vec<(Subscriber, Arc<AtomicBool>)> = self
             .handle
             .shared
             .subs
@@ -554,11 +588,14 @@ impl<A: App> Actor<A> {
             .unwrap_or_else(|p| p.into_inner())
             .list
             .iter()
-            .map(|(_, f)| f.clone())
+            .map(|s| (s.callback.clone(), s.active.clone()))
             .collect();
-        for f in subs {
+        for (f, active) in subs {
             if self.handle.shared.stopped.load(Ordering::SeqCst) {
                 return;
+            }
+            if !active.load(Ordering::SeqCst) {
+                continue;
             }
             let _ = catch_unwind(AssertUnwindSafe(|| f(notice)));
         }

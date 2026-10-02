@@ -122,7 +122,7 @@ Full walk-throughs: [Getting started](docs/getting-started.md).
 | Shell | Status in 0.1.0 |
 |---|---|
 | SwiftUI on macOS (13+) | Tested: `swift test` against the real core, plus a running example app. |
-| SwiftUI on iOS | `cargo carapace build apple --ios` builds the slices. Not yet exercised. |
+| SwiftUI on iOS | `cargo carapace build apple --ios` produces the device and simulator slices (checked). `CarapaceKit` itself has not been compiled for iOS yet: no iOS SDK on the build machine. |
 | Tauri 2 (webview) | Tested on macOS with a running example. Windows and Linux use the same code and have not been run. |
 | Node, and Electron's main process | Tested in Node with the real core through `koffi`. Not yet run inside Electron. |
 | Python (`ctypes`) | Tested: `tests/abi/test_abi.py` drives every ABI function. |

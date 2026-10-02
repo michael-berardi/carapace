@@ -502,3 +502,51 @@ fn two_different_types_with_the_same_name_in_both_directions_are_rejected() {
     }
     let _ = carapace::schema::<Clash>();
 }
+
+#[test]
+fn a_subscriber_unsubscribed_from_another_callback_is_not_called_again() {
+    // Regression: the fan-out had already copied the list, so B was still called after A removed it.
+    let rt = Runtime::<T>::start(Config {});
+    let h = rt.handle();
+    let b_calls = Arc::new(Mutex::new(0usize));
+    let b_id = Arc::new(Mutex::new(0u64));
+    let (hh, bid) = (h.clone(), b_id.clone());
+    rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            hh.unsubscribe(*bid.lock().unwrap());
+        }
+    });
+    let bc = b_calls.clone();
+    *b_id.lock().unwrap() = rt.subscribe(move |n| {
+        if let Notice::State(_) = n {
+            *bc.lock().unwrap() += 1;
+        }
+    });
+    rt.dispatch_wait(Action::Add { by: 1 }).unwrap();
+    rt.dispatch_wait(Action::Add { by: 1 }).unwrap();
+    assert_eq!(*b_calls.lock().unwrap(), 0);
+}
+
+#[test]
+fn dropping_the_runtime_from_a_replay_callback_does_not_deadlock() {
+    // Regression: drop joined the core thread while the replaying thread held the delivery lock,
+    // and the core thread was waiting for that lock to deliver its next notice.
+    let rt = Runtime::<T>::start(Config {});
+    let h = rt.handle();
+    let slot: Arc<Mutex<Option<Runtime<T>>>> = Arc::new(Mutex::new(Some(rt)));
+    h.dispatch(Action::Add { by: 1 }).unwrap(); // the core is about to deliver a state notice
+    let (done_tx, done_rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let s = slot.clone();
+        // The init event (Hello) replays to this first subscriber, on this thread, under the delivery lock.
+        h.subscribe(move |n| {
+            if let Notice::Event(_) = n {
+                s.lock().unwrap().take();
+            }
+        });
+        done_tx.send(()).unwrap();
+    });
+    done_rx
+        .recv_timeout(Duration::from_secs(5))
+        .expect("dropping from a replay callback deadlocked");
+}
