@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 — 2026-10-16
+
+- Publisher and identifiers renamed to Pareto Cybernetics: licence copyright, crate authors and the
+  example Tauri app identifier. No functional changes.
+- Measured per-action timings in the README and `docs/architecture.md` refreshed after the runtime changes.
+
 ## 0.1.0 — 2026-10-01
 
 First public release.

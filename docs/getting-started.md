@@ -101,7 +101,7 @@ cargo carapace build apple -p my-core --out App/Core           # MyCore.xcframew
 `Package.swift`:
 
 ```swift
-dependencies: [.package(url: "https://github.com/michael-berardi/carapace", from: "0.1.0")],
+dependencies: [.package(url: "https://github.com/michael-berardi/carapace", from: "0.1.1")],
 targets: [
     .binaryTarget(name: "MyCore", path: "Core/MyCore.xcframework"),
     .executableTarget(name: "App", dependencies: [
@@ -156,7 +156,7 @@ Web side:
 
 ```sh
 # the package is attached to each GitHub release (registry listing pending)
-npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.0/carapace-client-0.1.0.tgz
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
 cargo carapace gen ts -p my-core --out src/generated
 ```
 

@@ -4,7 +4,7 @@ default-members = ["crates/carapace", "crates/carapace-codegen", "crates/carapac
 resolver = "2"
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.80"
 license = "MIT"
@@ -13,8 +13,8 @@ homepage = "https://github.com/michael-berardi/carapace"
 authors = ["Pareto Cybernetics"]
 
 [workspace.dependencies]
-carapace = { path = "crates/carapace", version = "0.1.0" }
-carapace-codegen = { path = "crates/carapace-codegen", version = "0.1.0" }
+carapace = { path = "crates/carapace", version = "0.1.1" }
+carapace-codegen = { path = "crates/carapace-codegen", version = "0.1.1" }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 schemars = "1"

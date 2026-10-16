@@ -1,6 +1,6 @@
 {
   "name": "@carapace/client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "TypeScript client for Carapace cores: a typed store over Tauri, Electron/Node (C ABI) or any transport.",
   "license": "MIT",
   "type": "module",

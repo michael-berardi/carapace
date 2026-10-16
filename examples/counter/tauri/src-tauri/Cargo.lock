@@ -241,7 +241,7 @@ dependencies = [
 
 [[package]]
 name = "carapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "schemars 1.2.2",
  "serde",
@@ -399,7 +399,7 @@ dependencies = [
 
 [[package]]
 name = "counter-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "carapace",
  "schemars 1.2.2",
@@ -409,7 +409,7 @@ dependencies = [
 
 [[package]]
 name = "counter-tauri"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "carapace",
  "counter-core",
@@ -3214,7 +3214,7 @@ dependencies = [
 
 [[package]]
 name = "tauri-plugin-carapace"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "carapace",
  "serde",

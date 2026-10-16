@@ -164,7 +164,7 @@ like the view, and window long lists.
 | `tests/abi` | Language-neutral ABI test in Python. |
 
 Add the Swift package with
-`.package(url: "https://github.com/michael-berardi/carapace", from: "0.1.0")`.
+`.package(url: "https://github.com/michael-berardi/carapace", from: "0.1.1")`.
 
 ## Develop
 
