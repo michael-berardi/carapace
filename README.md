@@ -173,3 +173,7 @@ scripts/test-all.sh      # Rust, Swift, TypeScript and ABI tests, plus the examp
 ```
 
 [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · MIT
+
+---
+
+Part of [Pareto Cybernetics](https://paretocybernetics.com/): free, private, open-source tools for working with AI agents.
