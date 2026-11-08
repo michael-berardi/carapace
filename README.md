@@ -176,4 +176,4 @@ scripts/test-all.sh      # Rust, Swift, TypeScript and ABI tests, plus the examp
 
 ---
 
-Part of [Pareto Cybernetics](https://paretocybernetics.com/): free, private, open-source tools for working with AI agents.
+Part of [Pareto Cybernetics](https://paretocybernetics.com/projects/carapace/): free, private, open-source tools for working with AI agents.
