@@ -1,178 +1,84 @@
 # Carapace
 
-**Write your app's brain once in Rust. Give each platform a thin, generated shell.**
+Share a Rust app core between SwiftUI, Tauri and Node shells. Carapace is for
+apps that need native interfaces without duplicating state and business logic.
+The core handles actions, timers and background work; each shell renders JSON
+snapshots and handles platform events through a twelve-function C ABI.
 
-A Mac app should look and behave like a Mac app. A Rust core is faster to get
-right, and it runs everywhere. Carapace joins the two: your logic lives in one
-Rust crate, and SwiftUI, Tauri/TypeScript, Node/Electron or anything that can
-call C drives it through one small, stable C ABI. Typed Swift and TypeScript
-bindings are generated from the core's JSON Schema, so shells stay thin and
-cannot drift from the core.
+Swift and TypeScript bindings are generated from JSON Schema. A schema
+fingerprint check catches stale bindings when the store connects.
 
 <p>
   <img src="docs/images/counter-swiftui.png" width="420" alt="The Counter example as a native SwiftUI window">
   <img src="docs/images/counter-tauri.png" width="300" alt="The same Counter core in a Tauri window">
 </p>
 
-The same Rust core, rendered by SwiftUI and by a webview. [Good Night](https://github.com/michael-berardi/goodnight)
-runs its macOS and Windows apps on one Carapace engine.
+## Install
 
-## What you get
-
-- **One core, many shells.** State, actions, timers, background work and
-  platform requests are written once in Rust.
-- **Native on Apple platforms.** `CarapaceKit` gives SwiftUI an `ObservableObject`
-  store with `send`, `sendSync` (applies the result inside `withAnimation`),
-  bindings, and pure `query` calls. No bindings layer to learn.
-- **Web and desktop everywhere else.** A Tauri 2 plugin and a TypeScript client
-  (React hooks included) run the same core on Windows, Linux and macOS. Node and
-  Electron main processes load it through the C ABI.
-- **Generated, checked bindings.** `cargo carapace gen` writes Swift and
-  TypeScript types from the core. A schema fingerprint is checked at start-up, so
-  stale bindings fail with a message that names the fix.
-- **Testable logic.** The core is a deterministic engine: `dispatch(action)` returns the new
-  state, events and requested effects. Write plain `#[test]`s, with no UI and no mocks.
-- **Debuggable by design.** Undecodable actions, panics in `update`, and send
-  cycles become faults with the app name and the offending input. Nothing fails silently.
-
-## Quick start
-
-```rust
-use carapace::{App, Cx, NoEvent};
-use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
-
-#[derive(Default, Serialize, Deserialize, JsonSchema)]
-pub struct Config {}
-
-#[derive(Serialize, JsonSchema)]
-pub struct State { pub count: i64 }
-
-#[derive(Clone, Serialize, Deserialize, JsonSchema)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub enum Action { Increment, Reset }
-
-pub struct Counter(i64);
-
-impl App for Counter {
-    type State = State;
-    type Action = Action;
-    type Event = NoEvent;
-    type Config = Config;
-    const NAME: &'static str = "Counter";
-
-    fn init(_: Config, _: &mut Cx<Self>) -> Self { Counter(0) }
-    fn update(&mut self, action: Action, _: &mut Cx<Self>) {
-        match action { Action::Increment => self.0 += 1, Action::Reset => self.0 = 0 }
-    }
-    fn state(&self) -> State { State { count: self.0 } }
-}
-
-carapace::export!(Counter);
-```
-
-```toml
-[lib]
-crate-type = ["lib", "staticlib", "cdylib"]
-```
-
-Install the tool, generate bindings and package the core:
+With Rust installed:
 
 ```sh
-cargo install --git https://github.com/michael-berardi/carapace cargo-carapace
-cargo carapace gen swift --out Sources/App          # Counter.swift
-cargo carapace gen ts --out web/src/generated       # Counter.ts
-cargo carapace build apple --out apple/Core         # universal xcframework
+cargo install --git https://github.com/michael-berardi/carapace cargo-carapace --locked
+cargo carapace doctor
 ```
 
-SwiftUI:
+The CLI generates bindings and packages Apple libraries. Apple packaging needs
+macOS, Xcode and the Rust targets for each requested architecture.
 
-```swift
-import CarapaceFFI
-import CarapaceKit
-import SwiftUI
+Try generation with the included Counter core:
 
-@main struct CounterApp: App {
-    @StateObject private var store = try! CounterStore(backend: RustBackend())
-    var body: some Scene {
-        WindowGroup {
-            Button("\(store.state.count)") { store.send(.increment) }
-        }
-    }
-}
+```sh
+git clone https://github.com/michael-berardi/carapace
+cd carapace
+cargo carapace gen all -p counter-core --out generated
 ```
 
-Tauri (Rust side, then React):
-
-```rust
-tauri::Builder::default()
-    .plugin(tauri_plugin_carapace::plugin::<Counter, _>(Default::default()))
-```
-
-```tsx
-const store = await Store.connect<Types>(tauriTransport(), { schemaHash });
-const { count } = useCarapace(store);
-<button onClick={() => store.dispatch(actions.increment())}>{count}</button>
-```
-
-Full walk-throughs: [Getting started](docs/getting-started.md).
+This writes `Counter.swift` and `Counter.ts`. For your own core, implement
+`carapace::App`, export it with `carapace::export!`, and build it as a `cdylib`
+(and a `staticlib` for Apple packaging).
+[Getting started](docs/getting-started.md) covers the core, dependencies,
+Swift package setup, Tauri permissions and complete shell examples.
 
 ## Shells
 
-| Shell | Status in 0.1.0 |
+| Shell | Support |
 |---|---|
-| SwiftUI on macOS (13+) | Tested: `swift test` against the real core, plus a running example app. |
-| SwiftUI on iOS | `cargo carapace build apple --ios` produces the device and simulator slices (checked). `CarapaceKit` itself has not been compiled for iOS yet: no iOS SDK on the build machine. |
-| Tauri 2 (webview) | Tested on macOS with a running example. Windows and Linux use the same code and have not been run. |
-| Node, and Electron's main process | Tested in Node with the real core through `koffi`. Not yet run inside Electron. |
-| Python (`ctypes`) | Tested: `tests/abi/test_abi.py` drives every ABI function. |
-| Flutter, Qt, Kotlin, C#, Go | Anything that can call C can use the [ABI](docs/architecture.md#the-c-abi). No generators or samples yet. |
+| SwiftUI, macOS 13+ | `CarapaceKit` observable store and `CarapaceFFI` backend; unit and real-core tests. |
+| SwiftUI, iOS 16+ | Declared Swift package target; `build apple --ios` packages device and simulator slices. iOS compilation is not covered by the test script. |
+| Tauri 2 | Rust plugin and TypeScript client, with React hooks. Example builds on macOS; Windows and Linux are unverified. |
+| Node / Electron main process | C ABI transport using `koffi`, tested in Node; Electron is unverified. |
+| Python | [`Tests/abi/test_abi.py`](Tests/abi/test_abi.py) exercises every ABI function. |
+| Other C callers | Use the [C header](Sources/CCarapace/include/carapace.h). No other generators are included. |
 
-[Choosing a shell](docs/choosing-a-shell.md) compares these with Electron, Flutter, React Native and Qt.
+The TypeScript client is distributed as a release tarball:
 
-## How it works
-
-```
- SwiftUI / webview / Node / ...                Rust
-┌──────────────────────────────┐   JSON    ┌──────────────────────────────┐
-│ render state                 │ ◄──────── │ State  (snapshot per change) │
-│ send actions                 │ ────────► │ Action → update(&mut self)   │
-│ handle events (notify, open) │ ◄──────── │ Event  (platform requests)   │
-│ call pure queries            │ ◄───────► │ Query → Answer (stateless)   │
-└──────────────────────────────┘           └──────────────────────────────┘
-        generated types                 one actor thread, timers, background work
+```sh
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
 ```
 
-State travels as JSON snapshots, one per change, coalesced on the shell side.
-That keeps the ABI to twelve functions and makes every shell trivial. Measured on
-an M-series Mac, the core-side cost per action is 5 to 9 µs for a tiny state, 50 µs
-at 1,000 rows (49 KB) and 0.42 ms at 10,000 rows (514 KB). Keep `State` shaped
-like the view, and window long lists.
-[Architecture](docs/architecture.md) has the details and the limits.
-
-## Repository
-
-| Path | What |
-|---|---|
-| `crates/carapace` | The runtime, the C ABI and the `export!` macro. |
-| `crates/carapace-codegen` | JSON Schema to Swift and TypeScript. |
-| `crates/carapace-cli` | `cargo carapace`: `gen`, `schema`, `build apple`, `doctor`. |
-| `crates/tauri-plugin-carapace` | Tauri 2 plugin that hosts a core. |
-| `Sources/` | `CarapaceKit` and `CarapaceFFI` (Swift package, product names `CarapaceKit`, `CarapaceFFI`). |
-| `packages/client` | `@carapace/client`: store, Tauri and Node transports, React hooks. |
-| `examples/counter` | One core, three shells: SwiftUI, Tauri + React, Node tests. |
-| `tests/abi` | Language-neutral ABI test in Python. |
-
-Add the Swift package with
-`.package(url: "https://github.com/michael-berardi/carapace", from: "0.1.1")`.
+Swift's `sendSync` applies state before returning; call it **inside**
+`withAnimation` when animation is needed. It does not start an animation itself.
+Pure queries run without changing state. Events are buffered with limits;
+Tauri page reloads can lose events. See [architecture](docs/architecture.md)
+for delivery guarantees, ABI rules, schema limits and the snapshot benchmark.
 
 ## Develop
 
+On macOS with Xcode, Rust, Node 20+ and Python 3:
+
 ```sh
-scripts/test-all.sh      # Rust, Swift, TypeScript and ABI tests, plus the example app builds
+cargo fmt --all --check
+cargo clippy --workspace --all-targets -j 4
+CARGO_BUILD_JOBS=4 scripts/test-all.sh
 ```
 
-[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md) · MIT
+The script runs Rust, Python ABI, Swift and TypeScript tests, then builds both
+Counter shells without launching them. Apple packaging also requires the
+`aarch64-apple-darwin` and `x86_64-apple-darwin` Rust targets.
+
+[Counter example](examples/counter) · [Choosing a shell](docs/choosing-a-shell.md) ·
+[Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) ·
+[Changelog](CHANGELOG.md) · [MIT](LICENSE)
 
 ---
 

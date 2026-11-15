@@ -197,4 +197,4 @@ runs against the real core. The same code path serves an Electron main process.
 ## 5. Anything else
 
 Load the `cdylib` and call the functions in [`carapace.h`](../Sources/CCarapace/include/carapace.h).
-[`tests/abi/test_abi.py`](../tests/abi/test_abi.py) is a complete, working caller in about 110 lines.
+[`Tests/abi/test_abi.py`](../Tests/abi/test_abi.py) is a complete, working caller in about 110 lines.

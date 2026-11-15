@@ -84,16 +84,16 @@ On Windows, `gen` cannot load the library yet: run the core's schema example and
 
 ## State size
 
-Every change serialises the whole state. Measured with `cargo run --release -p carapace --example bench`
+Every change serialises the whole state. Measured with `cargo run --release -j 4 -p carapace --example bench`
 on an M-series Mac, full round trip through `dispatch_wait`:
 
 | Rows in state | Snapshot | Median | p99 |
 |---|---|---|---|
-| 0 | 20 B | 9.2 µs | 24 µs |
-| 10 | 475 B | 5.5 µs | 11 µs |
-| 100 | 4.7 KB | 8.6 µs | 12 µs |
-| 1,000 | 49 KB | 50 µs | 61 µs |
-| 10,000 | 514 KB | 420 µs | 458 µs |
+| 0 | 20 B | 4.2 µs | 16.4 µs |
+| 10 | 475 B | 5.0 µs | 23.1 µs |
+| 100 | 4.7 KB | 8.0 µs | 28.3 µs |
+| 1,000 | 49 KB | 46.8 µs | 76.9 µs |
+| 10,000 | 514 KB | 410.4 µs | 643.9 µs |
 
 Run-to-run variation at the small end is a few microseconds (the machine was busy). The shell then decodes the same bytes. Shape `State` like the view, and window long lists
 (visible range plus an action to move it) instead of mirroring a whole database.
