@@ -15,7 +15,17 @@ fingerprint check catches stale bindings when the store connects.
 
 ## Install
 
-With Rust installed:
+Install the prebuilt TypeScript client with npm:
+
+```sh
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
+```
+
+This is the client library, not the Rust core or CLI.
+
+### From source
+
+Install the CLI with Rust:
 
 ```sh
 cargo install --git https://github.com/michael-berardi/carapace cargo-carapace --locked
@@ -49,12 +59,6 @@ Swift package setup, Tauri permissions and complete shell examples.
 | Node / Electron main process | C ABI transport using `koffi`, tested in Node; Electron is unverified. |
 | Python | [`Tests/abi/test_abi.py`](Tests/abi/test_abi.py) exercises every ABI function. |
 | Other C callers | Use the [C header](Sources/CCarapace/include/carapace.h). No other generators are included. |
-
-The TypeScript client is distributed as a release tarball:
-
-```sh
-npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
-```
 
 Swift's `sendSync` applies state before returning; call it **inside**
 `withAnimation` when animation is needed. It does not start an animation itself.
