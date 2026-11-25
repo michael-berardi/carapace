@@ -2,7 +2,7 @@
 **/target
 .build/
 .swiftpm/
-node_modules/
+node_modules
 dist/
 *.xcframework
 examples/counter/apple/Core/
