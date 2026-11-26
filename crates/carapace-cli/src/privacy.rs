@@ -210,6 +210,56 @@ mod tests {
         fs::remove_dir_all(&dir).expect("cleanup");
     }
 
+    /// The README keeps a short Privacy section; the detail and fine print live in PRIVACY.md.
+    #[test]
+    fn readme_privacy_is_short_and_privacy_md_has_the_details() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let readme = fs::read_to_string(root.join("README.md")).expect("read README.md");
+        let section = readme
+            .split("\n## Privacy\n")
+            .nth(1)
+            .expect("README.md has a Privacy section");
+        let section = section.split("\n## ").next().unwrap_or(section);
+        let lines = section.lines().filter(|l| !l.trim().is_empty()).count();
+        assert!(
+            lines <= 6,
+            "README Privacy section has {lines} lines; keep it to 6 and move detail to PRIVACY.md"
+        );
+        assert_eq!(
+            readme.matches("\n## Privacy\n").count(),
+            1,
+            "README.md has more than one Privacy section"
+        );
+        for needed in ["PRIVACY.md", "CARAPACE_NO_UPDATE_CHECK=1", "update --clean"] {
+            assert!(
+                section.contains(needed),
+                "README Privacy section lacks {needed:?}"
+            );
+        }
+        assert!(
+            !section.to_ascii_lowercase().contains("no update check"),
+            "README Privacy section must describe the daily update check, not deny it"
+        );
+        let privacy = fs::read_to_string(root.join("PRIVACY.md")).expect("read PRIVACY.md");
+        for detail in [
+            "0700",
+            "0600",
+            "--out",
+            "newest 50",
+            "payloads",
+            "DO_NOT_TRACK=1",
+            "no remote fonts or CDNs",
+            "state.json",
+            "256 KB",
+            "update --clean",
+        ] {
+            assert!(
+                privacy.contains(detail),
+                "PRIVACY.md lost the detail {detail:?}"
+            );
+        }
+    }
+
     #[test]
     fn no_telemetry_packages_or_endpoints_are_declared() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
