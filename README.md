@@ -56,10 +56,10 @@ installs it with Cargo. Automatic installs stay off until you turn them on. See 
 
 ## Privacy
 
-The Rust crates, Swift package and npm client make no network requests.
-The CLI asks GitHub's public latest-release record at most once a day, only on an interactive terminal.
-The request is anonymous: no identifiers, version, usage or machine data.
-Turn it off with `CARAPACE_NO_UPDATE_CHECK=1` or `cargo carapace update --checks off`.
+No telemetry, analytics or identifiers. The Rust crates, Swift package and npm client make no network requests.
+`cargo carapace` checks GitHub's public latest-release record at most once a day, anonymously, on a terminal only.
+Turn the check off with `CARAPACE_NO_UPDATE_CHECK=1` or `cargo carapace update --checks off`.
+The CLI keeps its update state (and the opt-in auto-update log) in your cache folder; `cargo carapace update --clean` removes them.
 Details: [PRIVACY.md](PRIVACY.md).
 
 ## Shells

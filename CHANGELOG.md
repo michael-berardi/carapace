@@ -7,8 +7,18 @@
   `CARAPACE_NO_UPDATE_CHECK=1` or `update --checks off`.
 - `cargo carapace update` installs the release tag with `cargo install --locked`; `--check`
   (exit 0/10/1), `--skip`, `--auto on|off|status` (off by default), `--rollback` and `--clean`.
-- Added [Updates](docs/updates.md) and [PRIVACY.md](PRIVACY.md). The library crates, Swift package and
-  npm client still make no network requests.
+- `cargo carapace gen` and `build apple` create generated bindings, headers and packaging inputs
+  owner-only on Unix (`0700` directories, `0600` files, tightening a file that already existed);
+  an existing `--out` directory keeps its permissions.
+- `gen`, `build apple` and `doctor` pass telemetry opt-outs (`DO_NOT_TRACK` and friends, npm
+  update notifier, audit and fund off) to every tool they start; the test and Apple example build
+  scripts set them too.
+- The Swift and TypeScript stores no longer copy action or query payloads into fault messages.
+- A regression test fails if a telemetry or analytics package or endpoint appears in the
+  workspace manifests or shipped code.
+- Added [Updates](docs/updates.md) and [PRIVACY.md](PRIVACY.md), with short README Updates and
+  Privacy sections. The library crates, Swift package and npm client still make no network
+  requests.
 
 ## 0.1.1 — 2026-10-16
 

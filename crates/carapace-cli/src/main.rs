@@ -1,6 +1,7 @@
 //! `cargo carapace`: generate typed shells from a core and package it for Apple platforms.
 
 mod apple;
+mod privacy;
 mod schema_source;
 mod updates;
 
@@ -141,10 +142,10 @@ fn generate(args: &Args) -> Result<(), String> {
     let files =
         carapace_codegen::generate(&text).map_err(|e| format!("cannot generate bindings: {e}"))?;
     let out = args.out.clone().unwrap_or_else(|| "generated".into());
-    std::fs::create_dir_all(&out).map_err(|e| format!("cannot create {}: {e}", out.display()))?;
+    privacy::private_dir(&out)?;
     let write = |name: String, body: &str| -> Result<(), String> {
         let path = out.join(name);
-        std::fs::write(&path, body).map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        privacy::private_write(&path, body)?;
         println!("wrote {}", path.display());
         Ok(())
     };
@@ -184,7 +185,10 @@ fn doctor() -> Result<(), String> {
         ),
     ];
     for (tool, args, why) in checks {
-        match std::process::Command::new(tool).args(args).output() {
+        let mut cmd = std::process::Command::new(tool);
+        cmd.args(args);
+        privacy::telemetry_off(&mut cmd);
+        match cmd.output() {
             Ok(o) if o.status.success() => {
                 let line = String::from_utf8_lossy(if o.stdout.is_empty() {
                     &o.stderr
@@ -199,9 +203,10 @@ fn doctor() -> Result<(), String> {
             _ => println!("missing  {tool:<11} {:<40} {why}", ""),
         }
     }
-    let installed = std::process::Command::new("rustup")
-        .args(["target", "list", "--installed"])
-        .output();
+    let mut rustup = std::process::Command::new("rustup");
+    rustup.args(["target", "list", "--installed"]);
+    privacy::telemetry_off(&mut rustup);
+    let installed = rustup.output();
     if let Ok(o) = installed {
         let list = String::from_utf8_lossy(&o.stdout);
         for t in [

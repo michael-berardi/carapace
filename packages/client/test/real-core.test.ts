@@ -13,7 +13,18 @@ const lib = join(root, "target/debug", (process.platform === "win32" ? "" : "lib
 type CounterTypes = import("../../../examples/counter/web/Counter.js").Types;
 
 beforeAll(() => {
-  execFileSync("cargo", ["build", "-q", "-p", "counter-core", "-p", "cargo-carapace"], { cwd: root, stdio: "inherit" });
+  execFileSync("cargo", ["build", "-q", "-p", "counter-core", "-p", "cargo-carapace"], {
+    cwd: root,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      DO_NOT_TRACK: "1",
+      NEXT_TELEMETRY_DISABLED: "1",
+      ASTRO_TELEMETRY_DISABLED: "1",
+      HF_HUB_DISABLE_TELEMETRY: "1",
+      HOMEBREW_NO_ANALYTICS: "1",
+    },
+  });
   expect(existsSync(lib)).toBe(true);
 });
 

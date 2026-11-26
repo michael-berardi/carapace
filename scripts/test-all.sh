@@ -4,6 +4,13 @@
 set -eu
 # Also cap Cargo subprocesses launched by the Apple packaging CLI.
 export CARGO_BUILD_JOBS=4
+# Keep the local build tools quiet and offline with respect to usage reporting.
+export DO_NOT_TRACK=1
+export NEXT_TELEMETRY_DISABLED=1
+export ASTRO_TELEMETRY_DISABLED=1
+export HF_HUB_DISABLE_TELEMETRY=1
+export HOMEBREW_NO_ANALYTICS=1
+export npm_config_update_notifier=false npm_config_audit=false npm_config_fund=false npm_config_telemetry_enabled=false
 cd "$(dirname "$0")/.."
 
 step() { printf '\n== %s\n' "$1"; }

@@ -5,7 +5,7 @@ use std::process::Command;
 
 use serde_json::Value;
 
-use crate::Args;
+use crate::{privacy, Args};
 
 fn run(cmd: &mut Command, what: &str) -> Result<(), String> {
     let status = cmd
@@ -37,7 +37,7 @@ pub fn build(args: &Args) -> Result<(), String> {
     let profile = if args.debug { "debug" } else { "release" };
     let out_root = args.out.clone().unwrap_or_else(|| "apple".into());
     let work = target_dir.join("carapace-apple");
-    std::fs::create_dir_all(&work).map_err(|e| e.to_string())?;
+    privacy::private_dir(&work)?;
 
     let mut groups: Vec<(&str, Vec<&str>)> = vec![("macos", MAC.to_vec())];
     if args.ios {
@@ -54,6 +54,7 @@ pub fn build(args: &Args) -> Result<(), String> {
                 cmd.arg("--release");
             }
             eprintln!("building {pkg} for {t}");
+            privacy::telemetry_off(&mut cmd);
             run(
                 &mut cmd,
                 &format!("cargo build for {t} (is the target installed? `rustup target add {t}`)"),
@@ -77,13 +78,16 @@ pub fn build(args: &Args) -> Result<(), String> {
             }
         }
         // Same file name in every slice: the linker looks for `-l<lib_name>`.
-        std::fs::create_dir_all(work.join(group)).map_err(|e| e.to_string())?;
-        let fat = work.join(group).join(format!("lib{lib_name}.a"));
+        let group_dir = work.join(group);
+        privacy::private_dir(&group_dir)?;
+        let fat = group_dir.join(format!("lib{lib_name}.a"));
         if inputs.len() == 1 {
-            std::fs::copy(&inputs[0], &fat).map_err(|e| e.to_string())?;
+            let body = std::fs::read(&inputs[0]).map_err(|e| e.to_string())?;
+            privacy::private_write_bytes(&fat, &body)?;
         } else {
             let mut lipo = Command::new("lipo");
             lipo.arg("-create").args(&inputs).arg("-output").arg(&fat);
+            privacy::telemetry_off(&mut lipo);
             run(&mut lipo, "lipo")?;
         }
         slices.push(fat);
@@ -94,22 +98,22 @@ pub fn build(args: &Args) -> Result<(), String> {
         std::fs::remove_dir_all(&xcf)
             .map_err(|e| format!("cannot replace {}: {e}", xcf.display()))?;
     }
-    std::fs::create_dir_all(&out_root).map_err(|e| e.to_string())?;
+    privacy::private_dir(&out_root)?;
     // SwiftPM only links a static-library xcframework that ships a headers directory.
     // The real C declarations live in CarapaceFFI, so this header is deliberately empty.
     let headers = work.join("headers");
-    std::fs::create_dir_all(&headers).map_err(|e| e.to_string())?;
-    std::fs::write(
-        headers.join(format!("{lib_name}.h")),
+    privacy::private_dir(&headers)?;
+    privacy::private_write(
+        &headers.join(format!("{lib_name}.h")),
         "/* Intentionally empty: the Carapace C ABI is declared by the CarapaceFFI package target. */\n",
-    )
-    .map_err(|e| e.to_string())?;
+    )?;
     let mut cmd = Command::new("xcodebuild");
     cmd.arg("-create-xcframework");
     for s in &slices {
         cmd.arg("-library").arg(s).arg("-headers").arg(&headers);
     }
     cmd.arg("-output").arg(&xcf);
+    privacy::telemetry_off(&mut cmd);
     run(&mut cmd, "xcodebuild -create-xcframework")?;
     println!("wrote {}", xcf.display());
     print_next_steps(&xcf, &pkg);
@@ -138,6 +142,7 @@ fn print_next_steps(xcf: &Path, pkg: &str) {
 fn cargo_metadata(args: &Args) -> Result<Value, String> {
     let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     cmd.args(["metadata", "--format-version", "1", "--no-deps"]);
+    privacy::telemetry_off(&mut cmd);
     let out = cmd
         .output()
         .map_err(|e| format!("cannot run cargo metadata: {e}"))?;
