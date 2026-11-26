@@ -14,6 +14,12 @@ CI is local: run the checks before opening a PR. `scripts/test-all.sh` needs a M
 Node 20+ and Python 3. It starts no long-running processes and leaves nothing behind except
 build output, which is git-ignored.
 
+## Releases
+
+`scripts/release-assets.sh` builds the files attached to each GitHub release: the
+`carapace-client-<version>.tgz` npm tarball and its `.sha256`, in `target/release-assets`.
+It stops if the client and workspace versions differ.
+
 ## Wanted
 
 - Windows support for `cargo carapace gen` (read the schema from a built `.dll`)
