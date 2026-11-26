@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — 2026-11-26
+
+- `cargo carapace` says after a command, on a terminal, when a newer release exists: one anonymous
+  check of the public latest-release record at most once a day, off in CI, under agents and with
+  `CARAPACE_NO_UPDATE_CHECK=1` or `update --checks off`.
+- `cargo carapace update` installs the release tag with `cargo install --locked`; `--check`
+  (exit 0/10/1), `--skip`, `--auto on|off|status` (off by default), `--rollback` and `--clean`.
+- Added [Updates](docs/updates.md) and [PRIVACY.md](PRIVACY.md). The library crates, Swift package and
+  npm client still make no network requests.
+
 ## 0.1.1 — 2026-10-16
 
 - Publisher and identifiers renamed to Pareto Cybernetics: licence copyright, crate authors and the

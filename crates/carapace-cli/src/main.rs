@@ -2,6 +2,7 @@
 
 mod apple;
 mod schema_source;
+mod updates;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -14,6 +15,7 @@ USAGE
     cargo carapace schema [-p <package>]
     cargo carapace build apple [-p <package>] [--debug] [--ios] [--out <dir>]
     cargo carapace doctor
+    cargo carapace update [--check | --skip | --auto on|off|status | --checks on|off | --rollback | --clean]
 
 COMMANDS
     gen       Write typed Swift and/or TypeScript bindings (default: all) to --out (default ./generated).
@@ -21,6 +23,7 @@ COMMANDS
     schema    Print the core's JSON Schema bundle.
     build     Build a universal xcframework (macOS arm64+x86_64, plus iOS with --ios) for SwiftPM.
     doctor    Check the toolchain needed for each shell.
+    update    Install the latest release with `cargo install`. See docs/updates.md.
 
 OPTIONS
     -p, --package <name>   Cargo package that exports the core (default: the package in the current directory).
@@ -28,6 +31,13 @@ OPTIONS
     --out <dir>            Output directory.
     --debug                Build in debug mode (build apple defaults to release).
     --ios                  Also build iOS device and simulator slices.
+    --check                update: report only (exit 0 current, 10 update available, 1 check failed).
+    --skip                 update: no notice for this version until a newer one.
+    --auto <on|off|status> update: install future updates automatically (off by default).
+    --checks <on|off>      update: turn the daily release check on or off.
+    --rollback             update: reinstall the version that ran before the last update.
+    --clean                update: remove the update state and log (before uninstalling).
+    -V, --version          Show the version.
     -h, --help             Show this help.
 ";
 
@@ -37,6 +47,7 @@ pub struct Args {
     pub out: Option<PathBuf>,
     pub debug: bool,
     pub ios: bool,
+    pub update: updates::Flags,
     pub rest: Vec<String>,
 }
 
@@ -47,6 +58,7 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
         out: None,
         debug: false,
         ios: false,
+        update: updates::Flags::default(),
         rest: vec![],
     };
     let mut it = raw.into_iter();
@@ -58,26 +70,45 @@ fn parse_args(raw: Vec<String>) -> Result<Args, String> {
             "--out" => a.out = Some(value("--out")?.into()),
             "--debug" => a.debug = true,
             "--ios" => a.ios = true,
+            "--check" => a.update.check = true,
+            "--skip" => a.update.skip = true,
+            "--auto" => a.update.auto = Some(value("--auto")?),
+            "--checks" => a.update.checks = Some(value("--checks")?),
+            "--rollback" => a.update.rollback = true,
+            "--clean" => a.update.clean = true,
             "-h" | "--help" => a.rest.push("help".into()),
+            "-V" | "--version" => a.rest.push("version".into()),
             s if s.starts_with('-') => return Err(format!("unknown option {s}\n\n{HELP}")),
             _ => a.rest.push(arg),
         }
     }
+    let command = a.rest.first().map(String::as_str);
+    if a.update != updates::Flags::default() && command != Some("update") {
+        return Err(format!(
+            "--check, --skip, --auto, --checks, --rollback and --clean only work with `update`\n\n{HELP}"
+        ));
+    }
     Ok(a)
 }
 
-fn run() -> Result<(), String> {
+fn run() -> Result<u8, String> {
     let mut raw: Vec<String> = std::env::args().skip(1).collect();
     // Invoked as `cargo carapace ...`: cargo passes "carapace" first.
     if raw.first().map(String::as_str) == Some("carapace") {
         raw.remove(0);
     }
     let args = parse_args(raw)?;
-    match args.rest.first().map(String::as_str) {
+    let result = match args.rest.first().map(String::as_str) {
         None | Some("help") => {
             print!("{HELP}");
             Ok(())
         }
+        Some("version") => {
+            println!("cargo carapace {}", updates::CURRENT_VERSION);
+            Ok(())
+        }
+        Some("update") => return updates::run(&args.update),
+        Some(updates::BACKGROUND_COMMAND) => return updates::background_install(&args.rest[1..]),
         Some("schema") => {
             let text = schema_source::load(&args)?;
             println!("{text}");
@@ -92,7 +123,11 @@ fn run() -> Result<(), String> {
         },
         Some("doctor") => doctor(),
         Some(other) => Err(format!("unknown command {other:?}\n\n{HELP}")),
-    }
+    };
+    result?;
+    // After the command's own output: at most one short notice on stderr.
+    updates::after_command();
+    Ok(0)
 }
 
 fn generate(args: &Args) -> Result<(), String> {
@@ -189,7 +224,7 @@ fn doctor() -> Result<(), String> {
 
 fn main() -> ExitCode {
     match run() {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => ExitCode::from(code),
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE

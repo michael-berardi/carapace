@@ -3,6 +3,8 @@
 Carapace runs your own Rust code inside your own app. It opens no sockets and reads no files
 of its own. The surfaces worth attention are the C ABI (memory ownership, lengths, threading),
 the JSON decoding of actions, queries and config, and the Tauri command allowlist.
+The `cargo carapace` CLI also checks for releases and installs updates with `cargo install`;
+see [PRIVACY.md](PRIVACY.md) and [Updates](docs/updates.md).
 
 ## Reporting a vulnerability
 

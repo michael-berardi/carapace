@@ -18,7 +18,7 @@ fingerprint check catches stale bindings when the store connects.
 Install the prebuilt TypeScript client with npm:
 
 ```sh
-npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.2.0/carapace-client-0.2.0.tgz
 ```
 
 This is the client library, not the Rust core or CLI.
@@ -48,6 +48,19 @@ This writes `Counter.swift` and `Counter.ts`. For your own core, implement
 (and a `staticlib` for Apple packaging).
 [Getting started](docs/getting-started.md) covers the core, dependencies,
 Swift package setup, Tauri permissions and complete shell examples.
+
+## Updates
+
+After a command, `cargo carapace` says when a newer release exists; `cargo carapace update`
+installs it with Cargo. Automatic installs stay off until you turn them on. See [Updates](docs/updates.md).
+
+## Privacy
+
+The Rust crates, Swift package and npm client make no network requests.
+The CLI asks GitHub's public latest-release record at most once a day, only on an interactive terminal.
+The request is anonymous: no identifiers, version, usage or machine data.
+Turn it off with `CARAPACE_NO_UPDATE_CHECK=1` or `cargo carapace update --checks off`.
+Details: [PRIVACY.md](PRIVACY.md).
 
 ## Shells
 
