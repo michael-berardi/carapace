@@ -25,8 +25,12 @@ const TELEMETRY_OFF: [(&str, &str); 9] = [
     ("npm_config_telemetry_enabled", "false"),
 ];
 
-/// Create a private directory, including when it already exists.
+/// Create a private directory. A directory that already exists (for example a
+/// project folder passed as `--out`) keeps the permissions its owner chose.
 pub(crate) fn private_dir(path: &Path) -> Result<(), String> {
+    if path.is_dir() {
+        return Ok(());
+    }
     let created = {
         #[cfg(unix)]
         {
@@ -184,6 +188,12 @@ mod tests {
         private_dir(&nested).expect("private directory");
         let file = nested.join("Binding.swift");
         // Pre-create with loose permissions: private_write must tighten them.
+        fs::write(&file, "stale").expect("seed file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&file, fs::Permissions::from_mode(0o644)).unwrap();
+        }
         private_write(&file, "public enum Binding {}").expect("private file");
         #[cfg(unix)]
         {
