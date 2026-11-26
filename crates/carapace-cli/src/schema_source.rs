@@ -5,7 +5,7 @@ use std::process::{Command, Stdio};
 
 use serde_json::Value;
 
-use crate::Args;
+use crate::{privacy, Args};
 
 pub fn load(args: &Args) -> Result<String, String> {
     if let Some(path) = &args.schema {
@@ -24,6 +24,7 @@ pub fn build_cdylib(args: &Args) -> Result<String, String> {
         cmd.args(["-p", p]);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::inherit());
+    privacy::telemetry_off(&mut cmd);
     let out = cmd.output().map_err(|e| format!("cannot run cargo: {e}"))?;
     if !out.status.success() {
         return Err("cargo build failed (see the output above)".into());
@@ -64,8 +65,10 @@ pub fn build_cdylib(args: &Args) -> Result<String, String> {
 /// Manifest path of the package `-p` names, or of the one in the current directory, so a
 /// dependency that also builds a cdylib is never mistaken for the core.
 fn selected_manifest(args: &Args) -> Result<String, String> {
-    let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["metadata", "--format-version", "1", "--no-deps"])
+    let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
+    cmd.args(["metadata", "--format-version", "1", "--no-deps"]);
+    privacy::telemetry_off(&mut cmd);
+    let out = cmd
         .output()
         .map_err(|e| format!("cannot run cargo metadata: {e}"))?;
     if !out.status.success() {

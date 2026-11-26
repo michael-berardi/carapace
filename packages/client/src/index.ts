@@ -110,7 +110,8 @@ export class Store<T extends Types> {
     try {
       await this.transport.dispatch(JSON.stringify(action));
     } catch (e) {
-      this.fault(`could not send ${JSON.stringify(action)}: ${e instanceof Error ? e.message : String(e)}`);
+      // Keep action payloads out of fault history: they can contain user data.
+      this.fault(`could not send action: ${e instanceof Error ? e.message : String(e)}`);
       throw e;
     }
   }

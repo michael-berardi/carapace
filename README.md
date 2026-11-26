@@ -13,12 +13,36 @@ fingerprint check catches stale bindings when the store connects.
   <img src="docs/images/counter-tauri.png" width="300" alt="The same Counter core in a Tauri window">
 </p>
 
+## Privacy
+
+Carapace sends nothing over the network while your app runs. The core, Swift and
+TypeScript stores, Tauri plugin and example shells make no HTTP requests, open no
+sockets and ship no telemetry, analytics, crash reporter, beacon or update check.
+The example windows load only local CSS, scripts and images; there are no remote
+fonts or CDNs. There are no user or machine identifiers in the code.
+
+`cargo carapace` runs local build tools only: it does not phone home. The `cargo`,
+`npm` and other tools it invokes are given telemetry opt-outs; `cargo` itself may
+still download a missing crate. The install commands below download the client
+from GitHub or dependencies from npm because you run them.
+
+The libraries keep state, events and faults in memory only; fault history is
+capped at the newest 50 messages. Nothing is written to a user data directory.
+`cargo carapace gen` writes generated Swift/TypeScript bindings to `./generated`
+(or `--out`), and `cargo carapace build apple` writes an xcframework under
+`./apple` (or `--out`); on Unix, directories it creates are `0700` and files are
+`0600`. Quit the app to discard in-memory data; delete those output directories
+to remove generated files. There is no other stored data to clear.
+
+Carapace configures no third-party service. If you write a core or shell that
+calls one, that service receives whatever your code sends it.
+
 ## Install
 
 Install the prebuilt TypeScript client with npm:
 
 ```sh
-npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.1/carapace-client-0.1.1.tgz
+npm i https://github.com/michael-berardi/carapace/releases/download/v0.1.2/carapace-client-0.1.2.tgz
 ```
 
 This is the client library, not the Rust core or CLI.

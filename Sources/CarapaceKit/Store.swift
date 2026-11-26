@@ -105,7 +105,8 @@ public final class Store<App: CarapaceApp>: ObservableObject {
         do {
             try owner.core.dispatch(try encoder.encode(action))
         } catch {
-            report("could not send \(action): \(error.localizedDescription)")
+            // Never copy action payloads into fault messages: they can hold user data.
+            report("could not send action: \(error.localizedDescription)")
         }
     }
 
@@ -118,7 +119,7 @@ public final class Store<App: CarapaceApp>: ObservableObject {
             try owner.core.dispatchAndWait(try encoder.encode(action))
             drain()
         } catch {
-            report("could not send \(action): \(error.localizedDescription)")
+            report("could not send action: \(error.localizedDescription)")
         }
     }
 
@@ -130,7 +131,7 @@ public final class Store<App: CarapaceApp>: ObservableObject {
         } catch let error as CarapaceError {
             throw error
         } catch {
-            throw CarapaceError.decoding("could not run query \(query): \(error)")
+            throw CarapaceError.decoding("could not run query: \(error)")
         }
     }
 
